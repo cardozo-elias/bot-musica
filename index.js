@@ -222,7 +222,7 @@ async function playNext() {
 
     if (!fs.existsSync(song.absolutePath)) {
         if (serverQueue.textChannel) sendAndPurge(serverQueue.textChannel, `Descargando: ${song.title}...`);
-        const cmd = `.\\yt-dlp.exe -x --audio-format mp3 --no-playlist --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "${song.absolutePath}" "${song.url}"`;
+        const cmd = `yt-dlp -x --audio-format mp3 --no-playlist --user-agent "Mozilla/5.0" -o "${song.absolutePath}" "${song.url}"`;
         exec(cmd, (err) => {
             if (err) {
                 console.error(`[ERROR yt-dlp]`, err.message);
