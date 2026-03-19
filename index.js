@@ -15,15 +15,16 @@ const yts = require('yt-search');
 const Genius = require("genius-lyrics");
 const GeniusClient = new Genius.Client(process.env.GENIUS_TOKEN); 
 const { getTracks } = require('spotify-url-info')(require('undici').fetch);
-const { Pool } = require('pg'); // NUEVO: Cliente de PostgreSQL
+const { Pool } = require('pg');
 
-// --- CONFIGURACIÓN DE BASE DE DATOS ---
+
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // ssl: { rejectUnauthorized: false } // Descomentar si usás un servicio en la nube como Supabase/Render
+
 });
 
-let globalBlacklist = []; // Caché en memoria para búsquedas rápidas
+let globalBlacklist = [];
 
 const client = new Client({
     intents: [
@@ -56,7 +57,6 @@ const player = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Play }
 });
 
-// --- REGISTRO DE SLASH COMMANDS ---
 const commandsDef = [
     { name: 'play', description: 'Reproducir (YouTube/Spotify)', options: [{ type: 3, name: 'query', description: 'URL o búsqueda', required: true }] },
     { name: 'join', description: 'Unirse al canal de voz' },
@@ -81,7 +81,6 @@ const commandsDef = [
 client.once(Events.ClientReady, async c => {
     console.log(`[ONLINE] Sesión iniciada como ${c.user.tag}`);
     try {
-        // Inicialización de PostgreSQL
         await pool.query(`
             CREATE TABLE IF NOT EXISTS likes (
                 id SERIAL PRIMARY KEY,
@@ -111,7 +110,6 @@ client.once(Events.ClientReady, async c => {
     } catch (error) { console.error(`[ERROR INICIALIZACIÓN]:`, error); }
 });
 
-// --- HELPERS ---
 const formatTime = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
@@ -150,7 +148,6 @@ const createSong = (video, artistOverride = null) => {
     };
 };
 
-// --- MOTOR DE AUDIO ---
 async function playNext() {
     if (serverQueue.songs.length === 0) {
         if (serverQueue.autoplay && serverQueue.lastSong) {
@@ -163,8 +160,6 @@ async function playNext() {
                         if (!member.user.bot) activeUserIds.push(member.id);
                     });
                 }
-
-                // Consulta SQL nativa para traer los likes de los usuarios activos
                 let activeLikes = [];
                 if (activeUserIds.length > 0) {
                     const { rows } = await pool.query('SELECT * FROM likes WHERE user_id = ANY($1::varchar[])', [activeUserIds]);
@@ -222,7 +217,7 @@ async function playNext() {
 
     if (!fs.existsSync(song.absolutePath)) {
         if (serverQueue.textChannel) sendAndPurge(serverQueue.textChannel, `Descargando: ${song.title}...`);
-        const cmd = `yt-dlp -x --audio-format mp3 --no-playlist --user-agent "Mozilla/5.0" -o "${song.absolutePath}" "${song.url}"`;
+        const cmd = `.\\yt-dlp.exe -x --audio-format mp3 --no-playlist --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "${song.absolutePath}" "${song.url}"`;
         exec(cmd, (err) => {
             if (err) {
                 console.error(`[ERROR yt-dlp]`, err.message);
@@ -271,7 +266,6 @@ player.on(AudioPlayerStatus.Idle, () => {
     playNext();
 });
 
-// --- MANEJADOR DE INTERACCIONES ---
 client.on(Events.InteractionCreate, async interaction => {
     
     if (interaction.isButton()) {
@@ -434,9 +428,9 @@ client.on(Events.InteractionCreate, async interaction => {
         const topArtistsRes = await pool.query('SELECT artist, COUNT(*) as count FROM likes GROUP BY artist ORDER BY count DESC LIMIT 10');
 
         let statsMsg = `📊 **Estadísticas Globales del Servidor** 📊\nTotal de canciones: **${totalRes.rows[0].count}**\n`;
-        if (topUserRes.rows.length > 0) statsMsg += `👑 **Mayor Melómano:** <@${topUserRes.rows[0].user_id}> con **${topUserRes.rows[0].count}** favoritos.\n\n`;
+        if (topUserRes.rows.length > 0) statsMsg += `**Usuario con mayores likes:** <@${topUserRes.rows[0].user_id}> con **${topUserRes.rows[0].count}** favoritos.\n\n`;
         
-        statsMsg += `🏆 **Top 10 Artistas:**\n`;
+        statsMsg += `**Top 10 Artistas:**\n`;
         topArtistsRes.rows.forEach((row, index) => { statsMsg += `**${index + 1}.** ${row.artist} — ${row.count} likes\n`; });
         interaction.editReply(statsMsg);
     }
@@ -444,11 +438,11 @@ client.on(Events.InteractionCreate, async interaction => {
     if (command === "history") {
         if (serverQueue.playedHistory.length === 0) return interaction.editReply("❌ El historial está vacío.");
         const historyText = serverQueue.playedHistory.map((s, i) => `**${i + 1}.** ${s}`).join("\n");
-        interaction.editReply(`🕒 **Últimas 10 canciones:**\n${historyText}`);
+        interaction.editReply(`**Últimas 10 canciones:**\n${historyText}`);
     }
 
     if (command === "shuffle") {
-        if (serverQueue.songs.length < 3) return interaction.editReply("❌ Cola insuficiente.");
+        if (serverQueue.songs.length < 3) return interaction.editReply("Cola insuficiente.");
         const current = serverQueue.songs.shift();
         for (let i = serverQueue.songs.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -469,7 +463,7 @@ client.on(Events.InteractionCreate, async interaction => {
             new ButtonBuilder().setCustomId('skip_song').setLabel('⏭️ Saltar').setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId('like_song').setLabel('❤️ Guardar').setStyle(ButtonStyle.Success)
         );
-        interaction.editReply({ content: `🎵 **Sonando ahora:** ${serverQueue.lastSong.title}\n${bar} \`[${currentStr} / ${serverQueue.lastSong.durationStr}]\``, components: [row] });
+        interaction.editReply({ content: `**Sonando ahora:** ${serverQueue.lastSong.title}\n${bar} \`[${currentStr} / ${serverQueue.lastSong.durationStr}]\``, components: [row] });
     }
 
     if (command === "lyrics") {
@@ -485,7 +479,7 @@ client.on(Events.InteractionCreate, async interaction => {
             let lyrics = await searchRes[0].lyrics();
             if (lyrics.includes('[')) lyrics = lyrics.substring(lyrics.indexOf('['));
             const quoted = lyrics.split('\n').map(l => `> ${l}`).join('\n');
-            interaction.editReply(`📝 **Letra de ${searchRes[0].title}:**\n\n${quoted.substring(0, 1900)}`);
+            interaction.editReply(`**Letra de ${searchRes[0].title}:**\n\n${quoted.substring(0, 1900)}`);
         } catch (e) { interaction.editReply("❌ Error en Genius."); }
     }
 
@@ -497,12 +491,12 @@ client.on(Events.InteractionCreate, async interaction => {
     if (command === "queue") {
         if (serverQueue.songs.length === 0) return interaction.editReply("❌ Cola vacía.");
         const list = serverQueue.songs.slice(0, 10).map((s, i) => `**${i+1}.** ${s.title}`).join("\n");
-        interaction.editReply(`📻 **Cola actual:**\n${list}`);
+        interaction.editReply(`**Cola actual:**\n${list}`);
     }
 
     if (command === "autoplay") {
         serverQueue.autoplay = !serverQueue.autoplay;
-        interaction.editReply(`🔄 Autoplay: **${serverQueue.autoplay ? "ACTIVADO" : "DESACTIVADO"}**`);
+        interaction.editReply(`Autoplay: **${serverQueue.autoplay ? "activado" : "desactivado"}**`);
     }
 
     if (command === "stop") {
@@ -510,7 +504,7 @@ client.on(Events.InteractionCreate, async interaction => {
         serverQueue.autoplay = false; player.stop();
         if (serverQueue.connection) serverQueue.connection.destroy();
         serverQueue.connection = null; serverQueue.playing = false;
-        interaction.editReply("🛑 Sistema detenido.");
+        interaction.editReply("Sistema detenido.");
     }
 });
 
