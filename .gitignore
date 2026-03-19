@@ -1,25 +1,14 @@
-# Dependencias de Node.js
 node_modules/
-
-# Credenciales y variables de entorno (¡CRÍTICO!)
 .env
-
-# Archivos temporales de audio (yt-dlp)
 downloads/
 *.mp3
 *.webm
 *.m4a
 *.mp4
-
-# Archivos de datos locales antiguos (por si quedó alguno)
 liked_songs.json
 blacklist.json
-
-# Archivos de depuración y logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# Archivos del sistema operativo
 .DS_Store
 Thumbs.db
