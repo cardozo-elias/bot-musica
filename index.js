@@ -17,15 +17,11 @@ const GeniusClient = new Genius.Client(process.env.GENIUS_TOKEN);
 const { getTracks } = require('spotify-url-info')(require('undici').fetch);
 const { Pool } = require('pg');
 
-
-
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-
 });
 
 let globalBlacklist = [];
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -38,7 +34,7 @@ const client = new Client({
 const downloadDir = path.resolve(__dirname, 'downloads');
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir);
 
-const MSG_LIFETIME = 15000; 
+const MSG_LIFETIME = 30000; 
 
 const serverQueue = {
     songs: [],
@@ -70,7 +66,7 @@ const commandsDef = [
     { name: 'shuffle', description: 'Mezclar cola' },
     { name: 'song', description: 'Panel interactivo de reproducción actual' },
     { name: 'lyrics', description: 'Letra de la canción', options: [{ type: 3, name: 'query', description: 'Opcional: Artista y Canción', required: false }] },
-    { name: 'stats', description: 'Top artistas y mayor melómano' },
+    { name: 'stats', description: 'Top artistas y usuario con mayores likes' },
     { name: 'history', description: 'Ver las últimas 10 canciones que sonaron' },
     { name: 'skip', description: 'Saltar tema' },
     { name: 'queue', description: 'Ver cola' },
@@ -128,7 +124,7 @@ const sendAndPurge = (target, content, timeout = MSG_LIFETIME) => {
     const channel = target.channel || target;
     if (!channel || typeof channel.send !== 'function') return;
     channel.send(content).then(msg => {
-        setTimeout(() => msg.delete().catch(() => {}), timeout);
+        if (timeout > 0) setTimeout(() => msg.delete().catch(() => {}), timeout);
     }).catch(() => {});
 };
 
@@ -250,8 +246,7 @@ function startStream(song) {
                 new ButtonBuilder().setCustomId('skip_song').setLabel('⏭️ Saltar').setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder().setCustomId('like_song').setLabel('❤️ Guardar').setStyle(ButtonStyle.Success)
             );
-            serverQueue.textChannel.send({ content: `🎶 Reproduciendo: **${song.title}**`, components: [row] })
-                .then(msg => setTimeout(() => msg.delete().catch(() => {}), MSG_LIFETIME));
+            sendAndPurge(serverQueue.textChannel, { content: `🎶 Reproduciendo: **${song.title}**`, components: [row] });
         }
     } catch (error) {
         console.error(`[CRITICAL] Error de stream:`, error.message);
@@ -263,6 +258,7 @@ function startStream(song) {
 player.on(AudioPlayerStatus.Idle, () => {
     const finishedSong = serverQueue.songs.shift();
     if (finishedSong && fs.existsSync(finishedSong.absolutePath)) { fs.unlink(finishedSong.absolutePath, () => {}); }
+    if (global.gc) global.gc();
     playNext();
 });
 
@@ -427,7 +423,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const topUserRes = await pool.query('SELECT user_id, COUNT(*) as count FROM likes GROUP BY user_id ORDER BY count DESC LIMIT 1');
         const topArtistsRes = await pool.query('SELECT artist, COUNT(*) as count FROM likes GROUP BY artist ORDER BY count DESC LIMIT 10');
 
-        let statsMsg = `📊 **Estadísticas Globales del Servidor** 📊\nTotal de canciones: **${totalRes.rows[0].count}**\n`;
+        let statsMsg = ` **Estadísticas Globales del Servidor** \nTotal de canciones: **${totalRes.rows[0].count}**\n`;
         if (topUserRes.rows.length > 0) statsMsg += `**Usuario con mayores likes:** <@${topUserRes.rows[0].user_id}> con **${topUserRes.rows[0].count}** favoritos.\n\n`;
         
         statsMsg += `**Top 10 Artistas:**\n`;
@@ -505,6 +501,10 @@ client.on(Events.InteractionCreate, async interaction => {
         if (serverQueue.connection) serverQueue.connection.destroy();
         serverQueue.connection = null; serverQueue.playing = false;
         interaction.editReply("Sistema detenido.");
+    }
+
+    if (!["lyrics", "stats", "list", "history", "queue"].includes(command)) {
+        setTimeout(() => interaction.deleteReply().catch(() => {}), MSG_LIFETIME);
     }
 });
 
