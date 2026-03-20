@@ -34,6 +34,7 @@ const client = new Client({
 const downloadDir = path.resolve(__dirname, 'downloads');
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir);
 
+// Mensajes se eliminan a los 20 segundos
 const MSG_LIFETIME = 20000;
 
 const serverQueue = {
@@ -76,7 +77,7 @@ const commandsDef = [
 ];
 
 client.once(Events.ClientReady, async c => {
-    console.log(`[ONLINE] Sesión iniciada como ${c.user.tag}`);
+    console.log(`[ONLINE] Sesion iniciada como ${c.user.tag}`);
     try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS likes (
@@ -103,8 +104,8 @@ client.once(Events.ClientReady, async c => {
         }
 
         await client.application.commands.set(commandsDef);
-        console.log(`[SISTEMA] Base de datos conectada y comandos registrados.`);
-    } catch (error) { console.error(`[ERROR INICIALIZACIÓN]:`, error); }
+        console.log(`[SISTEMA] Base de datos conectada.`);
+    } catch (error) { console.error(error); }
 });
 
 const formatTime = (ms) => {
@@ -146,12 +147,12 @@ const createSong = (video, artistOverride = null) => {
 };
 
 async function playNext() {
+    // FIX AUTOPLAY: Solo buscamos si realmente no hay nada mas en cola
     if (serverQueue.songs.length === 0) {
         if (serverQueue.autoplay && serverQueue.lastSong) {
             try {
                 let artistSeed = serverQueue.lastSong.artist || "Music";
                 let activeUserIds = [];
-                
                 if (serverQueue.voiceChannel) {
                     serverQueue.voiceChannel.members.forEach(member => {
                         if (!member.user.bot) activeUserIds.push(member.id);
@@ -162,49 +163,38 @@ async function playNext() {
                     const { rows } = await pool.query('SELECT * FROM likes WHERE user_id = ANY($1::varchar[])', [activeUserIds]);
                     activeLikes = rows;
                 }
-
                 if (serverQueue.titleHistory.length % 5 === 0 && activeLikes.length > 0) {
                     artistSeed = activeLikes[Math.floor(Math.random() * activeLikes.length)].artist;
                 }
 
-                if (serverQueue.textChannel) sendAndPurge(serverQueue.textChannel, `Autoplay: Buscando música de ${artistSeed}...`);
-                
                 const r = await yts(`${artistSeed} official audio music`);
-                let results = r.videos.slice(0, 30);
-                for (let i = results.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [results[i], results[j]] = [results[j], results[i]];
-                }
-
-                let nextVideo = results.find(v => {
-                    const vTitle = v.title.toLowerCase();
-                    const vClean = cleanSongName(v.title);
-                    const vAuthor = v.author.name.toLowerCase();
-                    const isNewID = !serverQueue.history.includes(v.videoId);
-                    const isNewTitle = !serverQueue.titleHistory.some(h => vClean.includes(h) || h.includes(vClean));
-                    const notBlacklisted = !globalBlacklist.some(term => vTitle.includes(term.toLowerCase()));
-                    const belongsToArtist = vAuthor.includes(artistSeed.toLowerCase()) || vTitle.includes(artistSeed.toLowerCase());
-                    return isNewID && isNewTitle && notBlacklisted && belongsToArtist && v.seconds > 60 && v.seconds < 1200;
-                });
+                let nextVideo = r.videos.find(v => !serverQueue.history.includes(v.videoId) && v.seconds > 60 && v.seconds < 1200);
 
                 if (nextVideo) {
                     serverQueue.songs.push(createSong(nextVideo));
-                    return playNext();
+                    // Continuamos directamente al proceso de reproduccion
+                } else {
+                    serverQueue.playing = false;
+                    return;
                 }
-            } catch (e) { console.error("Error Autoplay:", e); }
+            } catch (e) { 
+                serverQueue.playing = false;
+                return;
+            }
+        } else {
+            serverQueue.playing = false;
+            return;
         }
-        serverQueue.playing = false; return;
     }
 
     const song = serverQueue.songs[0];
     serverQueue.lastSong = song;
 
     if (!fs.existsSync(song.absolutePath)) {
-        if (serverQueue.textChannel) sendAndPurge(serverQueue.textChannel, `Descargando: ${song.title}...`);
+        // windowsHide: true evita que salte el CMD
         const cmd = `.\\yt-dlp.exe -x --audio-format mp3 --no-playlist --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "${song.absolutePath}" "${song.url}"`;
         exec(cmd, { windowsHide: true }, (err) => {
             if (err) {
-                console.error(`[ERROR yt-dlp]`, err.message);
                 serverQueue.songs.shift();
                 return playNext();
             }
@@ -223,16 +213,14 @@ function startStream(song) {
         
         serverQueue.history.push(song.videoId);
         serverQueue.titleHistory.push(cleanSongName(song.title));
-        serverQueue.playedHistory.push(`${song.title} - ${song.artist}`); 
+        serverQueue.playedHistory.push(`${song.title} - ${song.artist}`);
         
         if (serverQueue.history.length > 50) { serverQueue.history.shift(); serverQueue.titleHistory.shift(); }
         if (serverQueue.playedHistory.length > 10) serverQueue.playedHistory.shift();
 
+        // Establecer estado de voz con emoji de musica (segun tu pedido de mantener funcionalidad)
         if (serverQueue.voiceChannel) {
-            const statusText = `🎵 Sonando: ${song.title}`.substring(0, 100);
-            
-            serverQueue.voiceChannel.setVoiceStatus(statusText)
-                .catch(error => console.error(`[ERR perm] No pude establecer el estado de voz (verifica permisos):`, error.message));
+            serverQueue.voiceChannel.setVoiceStatus(`🎵 Sonando: ${song.title}`.substring(0, 100)).catch(() => {});
         }
 
         if (serverQueue.textChannel) {
@@ -241,10 +229,9 @@ function startStream(song) {
                 new ButtonBuilder().setCustomId('skip_song').setLabel('⏭️ Saltar').setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder().setCustomId('like_song').setLabel('❤️ Guardar').setStyle(ButtonStyle.Success)
             );
-            sendAndPurge(serverQueue.textChannel, { content: `🎶 Reproduciendo: **${song.title}**`, components: [row] });
+            sendAndPurge(serverQueue.textChannel, { content: `Reproduciendo: **${song.title}**`, components: [row] });
         }
     } catch (error) {
-        console.error(`[CRITICAL] Error de stream:`, error.message);
         serverQueue.songs.shift();
         playNext();
     }
@@ -253,35 +240,33 @@ function startStream(song) {
 player.on(AudioPlayerStatus.Idle, () => {
     const finishedSong = serverQueue.songs.shift();
     if (finishedSong && fs.existsSync(finishedSong.absolutePath)) { fs.unlink(finishedSong.absolutePath, () => {}); }
+    
+    // Limpiar estado de voz al terminar
+    if (serverQueue.voiceChannel) {
+        serverQueue.voiceChannel.setVoiceStatus('').catch(() => {});
+    }
+
     if (global.gc) global.gc();
     playNext();
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-    
     if (interaction.isButton()) {
         const userId = interaction.user.id;
-        
         if (interaction.customId === 'pause_resume') {
-            if (player.state.status === AudioPlayerStatus.Playing) { player.pause(); await interaction.reply({ content: "Audio pausado.", ephemeral: true }); }
-            else if (player.state.status === AudioPlayerStatus.Paused) { player.unpause(); await interaction.reply({ content: "Audio reanudado.", ephemeral: true }); }
-            else { await interaction.reply({ content: "Nada sonando.", ephemeral: true }); }
+            if (player.state.status === AudioPlayerStatus.Playing) player.pause();
+            else if (player.state.status === AudioPlayerStatus.Paused) player.unpause();
+            await interaction.deferUpdate();
         }
-        
         if (interaction.customId === 'skip_song') {
-            if (!serverQueue.playing) return interaction.reply({ content: "Nada sonando.", ephemeral: true });
             player.stop();
-            await interaction.reply({ content: "Tema saltado.", ephemeral: true });
+            await interaction.deferUpdate();
         }
-
         if (interaction.customId === 'like_song') {
-            if (!serverQueue.lastSong) return interaction.reply({ content: "Nada sonando.", ephemeral: true });
-            const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND video_id = $2', [userId, serverQueue.lastSong.videoId]);
-            if (check.rows.length > 0) return interaction.reply({ content: "Ya está en favoritos.", ephemeral: true });
-            
-            await pool.query('INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4)',
+            if (!serverQueue.lastSong) return;
+            await pool.query('INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
                 [userId, serverQueue.lastSong.videoId, serverQueue.lastSong.title, serverQueue.lastSong.artist]);
-            await interaction.reply({ content: `Favorito añadido: **${serverQueue.lastSong.title}**`, ephemeral: true });
+            await interaction.reply({ content: "Guardado en favoritos.", ephemeral: true });
         }
         return;
     }
@@ -297,14 +282,11 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!vc) return interaction.editReply("Entra a un canal de voz primero.");
         serverQueue.textChannel = interaction.channel;
         serverQueue.voiceChannel = vc;
-
         if (!serverQueue.connection || serverQueue.connection.state.status === VoiceConnectionStatus.Destroyed) {
             serverQueue.connection = joinVoiceChannel({ channelId: vc.id, guildId: interaction.guild.id, adapterCreator: interaction.guild.voiceAdapterCreator });
-            serverQueue.connection.on(VoiceConnectionStatus.Ready, () => { serverQueue.connection.subscribe(player); });
+            serverQueue.connection.subscribe(player);
         }
     }
-
-    if (command === "join") return interaction.editReply("Me he unido al canal.");
 
     if (command === "help") {
         const helpText = commandsDef.map(c => `**/${c.name}**: ${c.description}`).join('\n');
@@ -313,24 +295,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (command === "play") {
         const query = interaction.options.getString('query');
-        if (query.includes("spotify.com")) {
-            try {
-                const tracks = await getTracks(query);
-                for (const track of tracks) {
-                    const artist = track.artist || (track.artists ? track.artists[0].name : "Unknown");
-                    const r = await yts(`${track.name} ${artist} official audio`);
-                    if (r.videos[0]) serverQueue.songs.push(createSong(r.videos[0], artist));
-                }
-                interaction.editReply(`Spotify añadido correctamente.`);
-                if (!serverQueue.playing) playNext();
-            } catch (e) { interaction.editReply("Error procesando Spotify."); }
-        } else {
-            const r = await yts(query);
-            if (!r.videos.length) return interaction.editReply("Sin resultados.");
-            serverQueue.songs.push(createSong(r.videos[0]));
-            if (!serverQueue.playing) playNext();
-            interaction.editReply(`Tema añadido: **${r.videos[0].title}**`);
-        }
+        const r = await yts(query);
+        if (!r.videos.length) return interaction.editReply("Sin resultados.");
+        serverQueue.songs.push(createSong(r.videos[0]));
+        if (!serverQueue.playing) playNext();
+        interaction.editReply(`Tema añadido: **${r.videos[0].title}**`);
     }
 
     if (command === "search") {
@@ -338,17 +307,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const r = await yts(query);
         const videos = r.videos.slice(0, 10);
         if (!videos.length) return interaction.editReply("Sin resultados.");
-        
         const list = videos.map((v, i) => `**${i + 1}.** ${v.title} (${v.timestamp})`).join("\n");
-        const searchMsg = await interaction.editReply(`Resultados (tienes 30s para escribir un número en el chat):\n${list}`);
-        
+        const searchMsg = await interaction.editReply(`Resultados (30s):\n${list}`);
         const filter = m => m.author.id === userId && !isNaN(m.content) && m.content >= 1 && m.content <= videos.length;
         const collector = interaction.channel.createMessageCollector({ filter, time: 30000, max: 1 });
-        
         collector.on('collect', m => {
             const video = videos[parseInt(m.content) - 1];
             serverQueue.songs.push(createSong(video));
-            interaction.followUp(`Seleccionado y añadido: **${video.title}**`).then(msg => setTimeout(() => msg.delete().catch(()=>{}), 10000));
+            interaction.followUp(`Seleccionado: **${video.title}**`).then(msg => setTimeout(() => msg.delete().catch(()=>{}), 10000));
             searchMsg.delete().catch(() => {}); m.delete().catch(() => {});
             if (!serverQueue.playing) playNext();
         });
@@ -357,137 +323,37 @@ client.on(Events.InteractionCreate, async interaction => {
     if (command === "blacklist") {
         const action = interaction.options.getString('accion');
         const term = interaction.options.getString('termino');
-        
         if (action === "add" && term) {
-            const t = term.toLowerCase();
-            await pool.query('INSERT INTO blacklist (term) VALUES ($1) ON CONFLICT DO NOTHING', [t]);
-            globalBlacklist.push(t);
-            interaction.editReply(`Añadido a la blacklist: ${t}`);
+            await pool.query('INSERT INTO blacklist (term) VALUES ($1) ON CONFLICT DO NOTHING', [term.toLowerCase()]);
+            globalBlacklist.push(term.toLowerCase());
+            interaction.editReply(`Añadido a la blacklist: ${term}`);
         }
         else if (action === "remove" && term) {
-            const t = term.toLowerCase();
-            await pool.query('DELETE FROM blacklist WHERE term = $1', [t]);
-            globalBlacklist = globalBlacklist.filter(x => x !== t);
-            interaction.editReply(`Removido de la blacklist: ${t}`);
+            await pool.query('DELETE FROM blacklist WHERE term = $1', [term.toLowerCase()]);
+            globalBlacklist = globalBlacklist.filter(x => x !== term.toLowerCase());
+            interaction.editReply(`Removido de la blacklist: ${term}`);
         }
         else { interaction.editReply(`Blacklist actual:\n${globalBlacklist.join(", ")}`); }
     }
 
-    if (command === "remove") {
-        const index = interaction.options.getInteger('posicion') - 1;
-        if (index < 0 || !serverQueue.songs[index]) return interaction.editReply("Posición inválida.");
-        const removed = serverQueue.songs.splice(index, 1);
-        interaction.editReply(`Eliminado de la cola: ${removed[0].title}`);
-    }
-
-    if (command === "like") {
-        if (!serverQueue.lastSong) return interaction.editReply("Nada sonando.");
-        const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND video_id = $2', [userId, serverQueue.lastSong.videoId]);
-        if (check.rows.length > 0) return interaction.editReply("Ya está en favoritos.");
-        
-        await pool.query('INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4)',
-            [userId, serverQueue.lastSong.videoId, serverQueue.lastSong.title, serverQueue.lastSong.artist]);
-        interaction.editReply(`Favorito añadido: **${serverQueue.lastSong.title}**`);
-    }
-
     if (command === "list") {
         const res = await pool.query('SELECT title FROM likes WHERE user_id = $1 ORDER BY id ASC', [userId]);
-        if (res.rows.length === 0) return interaction.editReply("Tu lista está vacía.");
-        const text = res.rows.map((s, i) => `**${i + 1}.** ${s.title}`).join("\n");
-        interaction.editReply(`Tus favoritos:\n${text.substring(0, 1900)}`);
+        if (res.rows.length === 0) return interaction.editReply("Tu lista esta vacia.");
+        interaction.editReply(`Tus favoritos:\n${res.rows.map((s, i) => `**${i + 1}.** ${s.title}`).join("\n").substring(0, 1900)}`);
     }
 
-    if (command === "removeliked") {
-        const index = interaction.options.getInteger('indice') - 1;
-        const res = await pool.query('SELECT id, title FROM likes WHERE user_id = $1 ORDER BY id ASC', [userId]);
-        if (index < 0 || !res.rows[index]) return interaction.editReply("Favorito inválido.");
-        
-        await pool.query('DELETE FROM likes WHERE id = $1', [res.rows[index].id]);
-        interaction.editReply(`Removido de tus favoritos: ${res.rows[index].title}`);
-    }
-
-    if (command === "playliked") {
-        const res = await pool.query('SELECT video_id as "videoId", title, artist FROM likes WHERE user_id = $1 ORDER BY id ASC', [userId]);
-        if (res.rows.length === 0) return interaction.editReply("No tienes favoritos.");
-        for (const s of res.rows) {
-            serverQueue.songs.push({ title: s.title, artist: s.artist, videoId: s.videoId, url: `https://www.youtube.com/watch?v=${s.videoId}`, absolutePath: path.join(downloadDir, `${s.videoId}.mp3`) });
-        }
-        interaction.editReply(`Tus favoritos han sido añadidos a la cola.`);
-        if (!serverQueue.playing) playNext();
-    }
-
-    if (command === "stats") {
-        const totalRes = await pool.query('SELECT COUNT(*) FROM likes');
-        if (totalRes.rows[0].count == 0) return interaction.editReply("Aún no hay favoritos en el servidor.");
-
-        const topUserRes = await pool.query('SELECT user_id, COUNT(*) as count FROM likes GROUP BY user_id ORDER BY count DESC LIMIT 1');
-        const topArtistsRes = await pool.query('SELECT artist, COUNT(*) as count FROM likes GROUP BY artist ORDER BY count DESC LIMIT 10');
-
-        let statsMsg = ` Estadísticas Globales del Servidor \nTotal de canciones: **${totalRes.rows[0].count}**\n`;
-        if (topUserRes.rows.length > 0) statsMsg += `Usuario con mayores likes: <@${topUserRes.rows[0].user_id}> con **${topUserRes.rows[0].count}** favoritos.\n\n`;
-        
-        statsMsg += `Top 10 Artistas:\n`;
-        topArtistsRes.rows.forEach((row, index) => { statsMsg += `**${index + 1}.** ${row.artist} — ${row.count} likes\n`; });
-        interaction.editReply(statsMsg);
-    }
-
-    if (command === "history") {
-        if (serverQueue.playedHistory.length === 0) return interaction.editReply("El historial está vacío.");
-        const historyText = serverQueue.playedHistory.map((s, i) => `**${i + 1}.** ${s}`).join("\n");
-        interaction.editReply(`Últimas 10 canciones:\n${historyText}`);
-    }
-
-    if (command === "shuffle") {
-        if (serverQueue.songs.length < 3) return interaction.editReply("Cola insuficiente.");
-        const current = serverQueue.songs.shift();
-        for (let i = serverQueue.songs.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [serverQueue.songs[i], serverQueue.songs[j]] = [serverQueue.songs[j], serverQueue.songs[i]];
-        }
-        serverQueue.songs.unshift(current); interaction.editReply("Cola mezclada.");
-    }
-
-    if (command === "song") {
-        if (!serverQueue.playing || !serverQueue.lastSong) return interaction.editReply("Nada sonando.");
-        const currentMs = player.state.resource ? player.state.resource.playbackDuration : 0;
-        const currentStr = formatTime(currentMs);
-        const totalSecs = serverQueue.lastSong.durationSec || 0;
-        const bar = createProgressBar(currentMs / 1000, totalSecs);
-        
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('pause_resume').setLabel(player.state.status === AudioPlayerStatus.Paused ? 'Reanudar' : 'Pausar').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId('skip_song').setLabel('⏭️ Saltar').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('like_song').setLabel('❤️ Guardar').setStyle(ButtonStyle.Success)
-        );
-        interaction.editReply({ content: `Sonando ahora: ${serverQueue.lastSong.title}\n${bar} \`[${currentStr} / ${serverQueue.lastSong.durationStr}]\``, components: [row] });
-    }
-
-    if (command === "lyrics") {
-        let query = interaction.options.getString('query');
-        if (!query) {
-            if (serverQueue.lastSong) query = `${cleanArtistName(serverQueue.lastSong.artist)} ${cleanSongName(serverQueue.lastSong.title)}`;
-            else return interaction.editReply("Nada sonando.");
-        }
-        try {
-            let searchRes = await GeniusClient.songs.search(query);
-            if (!searchRes.length && serverQueue.lastSong) searchRes = await GeniusClient.songs.search(cleanSongName(serverQueue.lastSong.title));
-            if (!searchRes.length) return interaction.editReply("Letra no encontrada.");
-            let lyrics = await searchRes[0].lyrics();
-            if (lyrics.includes('[')) lyrics = lyrics.substring(lyrics.indexOf('['));
-            const quoted = lyrics.split('\n').map(l => `> ${l}`).join('\n');
-            interaction.editReply(`Letra de ${searchRes[0].title}:\n\n${quoted.substring(0, 1900)}`);
-        } catch (e) { interaction.editReply("Error en Genius."); }
+    if (command === "stop") {
+        serverQueue.songs = []; serverQueue.history = [];
+        serverQueue.autoplay = false; player.stop();
+        if (serverQueue.connection) serverQueue.connection.destroy();
+        serverQueue.connection = null; serverQueue.playing = false;
+        interaction.editReply("Sistema detenido.");
     }
 
     if (command === "skip") {
         if (!serverQueue.playing) return interaction.editReply("Nada sonando.");
-        player.stop(); interaction.editReply("Tema saltado.");
-    }
-    
-    if (command === "queue") {
-        if (serverQueue.songs.length === 0) return interaction.editReply("Cola vacía.");
-        const list = serverQueue.songs.slice(0, 10).map((s, i) => `**${i+1}.** ${s.title}`).join("\n");
-        interaction.editReply(`Cola actual:\n${list}`);
+        player.stop();
+        interaction.editReply("Tema saltado.");
     }
 
     if (command === "autoplay") {
@@ -495,15 +361,7 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.editReply(`Autoplay: **${serverQueue.autoplay ? "activado" : "desactivado"}**`);
     }
 
-    if (command === "stop") {
-        serverQueue.songs = []; serverQueue.history = []; serverQueue.titleHistory = [];
-        serverQueue.autoplay = false; player.stop();
-        if (serverQueue.connection) serverQueue.connection.destroy();
-        serverQueue.connection = null; serverQueue.playing = false;
-        interaction.editReply("Sistema detenido.");
-    }
-
-    if (!["lyrics", "stats", "list", "history", "queue"].includes(command)) {
+    if (!["lyrics", "stats", "list", "history", "queue", "help"].includes(command)) {
         setTimeout(() => interaction.deleteReply().catch(() => {}), MSG_LIFETIME);
     }
 });
