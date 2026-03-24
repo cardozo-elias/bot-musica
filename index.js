@@ -6,7 +6,8 @@ const {
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle, 
-    EmbedBuilder 
+    EmbedBuilder,
+    MessageFlags // <-- Agregado para solucionar el warning de ephemeral
 } = require('discord.js');
 const {
     joinVoiceChannel,
@@ -171,7 +172,8 @@ async function playNext() {
                     activeLikes = rows;
                 }
 
-                if (serverQueue.titleHistory.length % 5 === 0 && activeLikes.length > 0) {
+                // Ajuste: Cambia de artista por gusto de usuario solo cada 12 canciones para dar más consistencia
+                if (serverQueue.titleHistory.length % 12 === 0 && activeLikes.length > 0) {
                     artistSeed = activeLikes[Math.floor(Math.random() * activeLikes.length)].artist;
                 }
 
@@ -183,7 +185,6 @@ async function playNext() {
                     [results[i], results[j]] = [results[j], results[i]];
                 }
 
-                // --- NUEVO: FILTRO ESTRICTO ANTI-BASURA PARA AUTOPLAY ---
                 const spamWords = ['quiz', 'interview', 'podcast', 'reaction', 'karaoke', 'tutorial', 'cover', 'review', 'vlog', 'live', 'concert', 'unplugged', 'bass cover', 'guitar cover', 'drum cover'];
 
                 let nextVideo = results.find(v => {
@@ -194,14 +195,18 @@ async function playNext() {
                     const notBlacklisted = !globalBlacklist.some(term => vTitle.includes(term.toLowerCase()));
                     const isNotSpam = !spamWords.some(spamWord => vTitle.includes(spamWord));
                     
-                    return isNewID && isNewTitle && notBlacklisted && isNotSpam && v.seconds > 60 && v.seconds < 1200;
+                    // Ajuste estricto: El nombre del canal o el titulo TIENE que incluir al artista que estamos buscando
+                    const belongsToArtist = v.author.name.toLowerCase().includes(artistSeed.toLowerCase()) || vTitle.includes(artistSeed.toLowerCase());
+                    
+                    return isNewID && isNewTitle && notBlacklisted && isNotSpam && belongsToArtist && v.seconds > 60 && v.seconds < 1200;
                 });
 
                 if (!nextVideo) {
                     const fallbackRes = await yts(`${artistSeed} music track`);
                     nextVideo = fallbackRes.videos.find(v => {
                         const vT = v.title.toLowerCase();
-                        return !serverQueue.history.includes(v.videoId) && !spamWords.some(s => vT.includes(s)) && v.seconds < 1200;
+                        const belongsToArtist = v.author.name.toLowerCase().includes(artistSeed.toLowerCase()) || vT.includes(artistSeed.toLowerCase());
+                        return !serverQueue.history.includes(v.videoId) && !spamWords.some(s => vT.includes(s)) && belongsToArtist && v.seconds < 1200;
                     });
                 }
 
@@ -256,8 +261,7 @@ function startStream(song) {
 
         if (serverQueue.voiceChannel && typeof serverQueue.voiceChannel.setVoiceStatus === 'function') {
             const statusText = `Sonando: ${song.title}`.substring(0, 100);
-            serverQueue.voiceChannel.setVoiceStatus(statusText)
-                .catch(e => console.log(`Permiso de estado denegado:`, e.message));
+            serverQueue.voiceChannel.setVoiceStatus(statusText).catch(() => {});
         }
 
         if (serverQueue.textChannel) {
@@ -293,24 +297,28 @@ client.on(Events.InteractionCreate, async interaction => {
     
     if (interaction.isButton()) {
         const userId = interaction.user.id;
+        
+        // Uso de MessageFlags.Ephemeral en lugar de ephemeral: true para evitar el warning
         if (interaction.customId === 'pause_resume') {
-            if (player.state.status === AudioPlayerStatus.Playing) { player.pause(); await interaction.reply({ content: "Audio pausado.", ephemeral: true }); }
-            else if (player.state.status === AudioPlayerStatus.Paused) { player.unpause(); await interaction.reply({ content: "Audio reanudado.", ephemeral: true }); }
-            else { await interaction.reply({ content: "Nada sonando.", ephemeral: true }); }
+            if (player.state.status === AudioPlayerStatus.Playing) { player.pause(); await interaction.reply({ content: "Audio pausado.", flags: MessageFlags.Ephemeral }); }
+            else if (player.state.status === AudioPlayerStatus.Paused) { player.unpause(); await interaction.reply({ content: "Audio reanudado.", flags: MessageFlags.Ephemeral }); }
+            else { await interaction.reply({ content: "Nada sonando.", flags: MessageFlags.Ephemeral }); }
         }
+        
         if (interaction.customId === 'skip_song') {
-            if (!serverQueue.playing) return interaction.reply({ content: "Nada sonando.", ephemeral: true });
+            if (!serverQueue.playing) return interaction.reply({ content: "Nada sonando.", flags: MessageFlags.Ephemeral });
             player.stop();
-            await interaction.reply({ content: "Tema saltado.", ephemeral: true });
+            await interaction.reply({ content: "Tema saltado.", flags: MessageFlags.Ephemeral });
         }
+
         if (interaction.customId === 'like_song') {
-            if (!serverQueue.lastSong) return interaction.reply({ content: "Nada sonando.", ephemeral: true });
+            if (!serverQueue.lastSong) return interaction.reply({ content: "Nada sonando.", flags: MessageFlags.Ephemeral });
             const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND video_id = $2', [userId, serverQueue.lastSong.videoId]);
-            if (check.rows.length > 0) return interaction.reply({ content: "Ya está en favoritos.", ephemeral: true });
+            if (check.rows.length > 0) return interaction.reply({ content: "Ya está en favoritos.", flags: MessageFlags.Ephemeral });
             
             await pool.query('INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4)',
                 [userId, serverQueue.lastSong.videoId, serverQueue.lastSong.title, serverQueue.lastSong.artist]);
-            await interaction.reply({ content: `Favorito añadido: **${serverQueue.lastSong.title}**`, ephemeral: true });
+            await interaction.reply({ content: `Favorito añadido: **${serverQueue.lastSong.title}**`, flags: MessageFlags.Ephemeral });
         }
         return;
     }
