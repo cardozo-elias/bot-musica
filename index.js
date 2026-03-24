@@ -7,7 +7,7 @@ const {
     ButtonBuilder, 
     ButtonStyle, 
     EmbedBuilder,
-    MessageFlags // <-- Agregado para solucionar el warning de ephemeral
+    MessageFlags
 } = require('discord.js');
 const {
     joinVoiceChannel,
@@ -172,46 +172,72 @@ async function playNext() {
                     activeLikes = rows;
                 }
 
-                // Ajuste: Cambia de artista por gusto de usuario solo cada 12 canciones para dar más consistencia
+                // Salto de artista solo cada 12 canciones para mantener el mood
                 if (serverQueue.titleHistory.length % 12 === 0 && activeLikes.length > 0) {
                     artistSeed = activeLikes[Math.floor(Math.random() * activeLikes.length)].artist;
                 }
 
-                const r = await yts(`${artistSeed} official audio music`);
-                let results = r.videos.slice(0, 30);
+                const r = await yts(`${artistSeed} official audio`);
+                let results = r.videos.slice(0, 20); // Top 20 de YouTube
                 
-                for (let i = results.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [results[i], results[j]] = [results[j], results[i]];
-                }
+                // Filtro extendido anti-músicos y entrevistas
+                const spamWords = [
+                    'quiz', 'interview', 'podcast', 'reaction', 'karaoke', 'tutorial', 
+                    'cover', 'review', 'vlog', 'live', 'concert', 'unplugged', 
+                    'drum', 'bass', 'guitar', 'playthrough', 'lesson', 'behind', 
+                    'making of', 'isolated', 'vocals', 'instrumental', 'how to play',
+                    'tablature', 'tabs', 'chords'
+                ];
 
-                const spamWords = ['quiz', 'interview', 'podcast', 'reaction', 'karaoke', 'tutorial', 'cover', 'review', 'vlog', 'live', 'concert', 'unplugged', 'bass cover', 'guitar cover', 'drum cover'];
+                let nextVideo = null;
 
-                let nextVideo = results.find(v => {
+                // PASADA 1: Búsqueda de alta calidad (Canales Oficiales, VEVO, Topic)
+                let validVideos = results.filter(v => {
                     const vTitle = v.title.toLowerCase();
+                    const vAuthor = v.author.name.toLowerCase();
                     const vClean = cleanSongName(v.title);
                     const isNewID = !serverQueue.history.includes(v.videoId);
                     const isNewTitle = !serverQueue.titleHistory.some(h => vClean.includes(h) || h.includes(vClean));
                     const notBlacklisted = !globalBlacklist.some(term => vTitle.includes(term.toLowerCase()));
                     const isNotSpam = !spamWords.some(spamWord => vTitle.includes(spamWord));
                     
-                    // Ajuste estricto: El nombre del canal o el titulo TIENE que incluir al artista que estamos buscando
-                    const belongsToArtist = v.author.name.toLowerCase().includes(artistSeed.toLowerCase()) || vTitle.includes(artistSeed.toLowerCase());
+                    const isOfficialChannel = vAuthor.includes(artistSeed.toLowerCase()) || vAuthor.includes('topic') || vAuthor.includes('vevo') || vAuthor.includes('official');
                     
-                    return isNewID && isNewTitle && notBlacklisted && isNotSpam && belongsToArtist && v.seconds > 60 && v.seconds < 1200;
+                    return isNewID && isNewTitle && notBlacklisted && isNotSpam && isOfficialChannel && v.seconds > 60 && v.seconds < 1200;
                 });
 
+                if (validVideos.length > 0) {
+                    // Elegimos al azar entre los mejores 5 para dar variedad sin perder calidad
+                    const topValid = validVideos.slice(0, 5);
+                    nextVideo = topValid[Math.floor(Math.random() * topValid.length)];
+                } else {
+                    // PASADA 2: Relajada (Si no hay canal oficial, al menos que no tenga spam y el artista esté en el título)
+                    validVideos = results.filter(v => {
+                        const vTitle = v.title.toLowerCase();
+                        const isNewID = !serverQueue.history.includes(v.videoId);
+                        const notBlacklisted = !globalBlacklist.some(term => vTitle.includes(term.toLowerCase()));
+                        const isNotSpam = !spamWords.some(spamWord => vTitle.includes(spamWord));
+                        const belongsToArtist = vTitle.includes(artistSeed.toLowerCase());
+
+                        return isNewID && notBlacklisted && isNotSpam && belongsToArtist && v.seconds > 60 && v.seconds < 1200;
+                    });
+
+                    if (validVideos.length > 0) {
+                        const topValid = validVideos.slice(0, 5);
+                        nextVideo = topValid[Math.floor(Math.random() * topValid.length)];
+                    }
+                }
+
                 if (!nextVideo) {
-                    const fallbackRes = await yts(`${artistSeed} music track`);
+                    const fallbackRes = await yts(`${artistSeed} song`);
                     nextVideo = fallbackRes.videos.find(v => {
                         const vT = v.title.toLowerCase();
-                        const belongsToArtist = v.author.name.toLowerCase().includes(artistSeed.toLowerCase()) || vT.includes(artistSeed.toLowerCase());
-                        return !serverQueue.history.includes(v.videoId) && !spamWords.some(s => vT.includes(s)) && belongsToArtist && v.seconds < 1200;
+                        return !serverQueue.history.includes(v.videoId) && !spamWords.some(s => vT.includes(s)) && v.seconds < 1200;
                     });
                 }
 
                 if (nextVideo) {
-                    serverQueue.songs.push(createSong(nextVideo));
+                    serverQueue.songs.push(createSong(nextVideo, artistSeed));
                     return playNext();
                 } else {
                     serverQueue.playing = false;
@@ -298,7 +324,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         const userId = interaction.user.id;
         
-        // Uso de MessageFlags.Ephemeral en lugar de ephemeral: true para evitar el warning
         if (interaction.customId === 'pause_resume') {
             if (player.state.status === AudioPlayerStatus.Playing) { player.pause(); await interaction.reply({ content: "Audio pausado.", flags: MessageFlags.Ephemeral }); }
             else if (player.state.status === AudioPlayerStatus.Paused) { player.unpause(); await interaction.reply({ content: "Audio reanudado.", flags: MessageFlags.Ephemeral }); }
