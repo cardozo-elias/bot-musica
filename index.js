@@ -18,17 +18,14 @@ const { request } = require('undici');
 const { getTracks } = require('spotify-url-info')(require('undici').fetch);
 const { Pool } = require('pg');
 
-// --- NUEVAS IMPORTACIONES MOTOR GRÁFICO ---
 const { createCanvas, loadImage } = require('canvas');
 const { Vibrant } = require('node-vibrant/node');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// --- CONFIGURACIÓN VIP / PREMIUM ---
 const VIP_GUILDS = ['721148844850675813', '554815984326672384']; 
 const PATREON_LINK = 'https://patreon.com/TuPatreonAqui';
 const MSG_LIFETIME = 60000; 
 
-// --- ESTÉTICA MINIMALISTA (Helpers Visuales) ---
 const THEME_COLOR = '#2b2d31'; 
 const UI = {
     success: (desc) => new EmbedBuilder().setColor(0x57F287).setDescription(`✅ ${desc}`),
@@ -37,7 +34,6 @@ const UI = {
     panel: () => new EmbedBuilder().setColor(0x2b2d31)
 };
 
-// --- DICCIONARIO DE IDIOMAS (i18n) ---
 const i18n = {
     'es': {
         welcome: "Configuración Inicial Requerida",
@@ -359,7 +355,6 @@ function getQueue(guildId) {
                 q.voiceChannel.client.rest.put(`/channels/${q.voiceChannel.id}/voice-status`, { body: { status: "" } }).catch(() => {});
             }
             
-            // NO borramos el mensaje aquí para permitir el efecto Sticky en playNext
             if (q.progressInterval) { clearInterval(q.progressInterval); q.progressInterval = null; }
             if (global.gc) global.gc();
             
@@ -422,7 +417,6 @@ const commandsDef = [
     { name: 'filter', description: 'Procesamiento acústico en tiempo real (Premium)', options: [{ type: 3, name: 'tipo', description: 'Tipo de filtro', required: true, choices: [{name: 'Ninguno (Limpiar)', value: 'clear'}, {name: ' Bassboost', value: 'bass=g=15'}, {name: '🎧 8D Audio', value: 'apulsator=hz=0.09'}, {name: ' Nightcore', value: 'asetrate=44100*1.25,aresample=44100,atempo=1'}] }] },
     { name: '247', description: 'Alternar modo conexión permanente (Premium)' },
     { name: 'dj', description: 'Gestión de roles de control (Admin)', options: [{ type: 3, name: 'accion', description: 'Acción', required: true, choices: [{name: 'Establecer Rol', value: 'set'}, {name: 'Limpiar Rol', value: 'clear'}]}, { type: 8, name: 'rol', description: 'Rol objetivo', required: false }] },
-    // --- ACTUALIZADO: autocomplete activado para nombre de playlist ---
     { name: 'playlist', description: 'Gestión de Playlists Personales', options: [{ type: 3, name: 'accion', description: 'Acción', required: true, choices: [{name: 'Guardar Cola Actual', value: 'save'}, {name: 'Reproducir Mi Playlist', value: 'play'}]}, { type: 3, name: 'nombre', description: 'Nombre de la playlist', required: true, autocomplete: true }] },
     { name: 'profile', description: 'Visualizar tu perfil de oyente y tiempo de reproducción' },
     { name: 'trivia', description: 'Iniciar minijuego de adivinar pistas' },
@@ -469,7 +463,6 @@ const formatTime = (ms) => {
     return `${Math.floor(totalSeconds / 60)}:${(totalSeconds % 60).toString().padStart(2, '0')}`;
 };
 
-// --- HELPERS MOTOR GRÁFICO ---
 function ctxMenuRoundedImage(ctx, x, y, width, height, radius) {
     ctx.beginPath(); ctx.moveTo(x + radius, y); ctx.lineTo(x + width - radius, y); ctx.quadraticCurveTo(x + width, y, x + width, y + radius); ctx.lineTo(x + width, y + height - radius); ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height); ctx.lineTo(x + radius, y + height); ctx.quadraticCurveTo(x, y + height, x, y + height - radius); ctx.lineTo(x, y + radius); ctx.quadraticCurveTo(x, y, x + radius, y); ctx.closePath();
 }
@@ -484,23 +477,15 @@ function getDisplayArtist(song) {
     return song.realArtist || song.artist;
 }
 
-// Crea solo el Embed de progreso (sin regenerar imagen pesada)
 const createNowPlayingEmbed = (song, currentMs, l = 'es', dynamicColor = 0x2b2d31) => {
-    // Temporizador minimalista que no arruina la estética
     const timeStr = `⏱️ \`${formatTime(currentMs)}\`  •  \`${song.durationStr}\``;
-    
-    const embed = new EmbedBuilder()
-        .setColor(dynamicColor)
-        .setImage('attachment://card_musicardi.png') 
-        .setDescription(timeStr);
-        
+    const embed = new EmbedBuilder().setColor(dynamicColor).setImage('attachment://card_musicardi.png').setDescription(timeStr);
     return embed;
 };
 
 const cleanArtistName = (name) => name.replace(/VEVO$| - Topic$|官方頻道$|Oficial$|Official$/i, '').trim();
 const cleanSongName = (name) => name.toLowerCase().replace(/\(.*\)|\[.*\]/g, '').replace(/official video|music video|lyric video|video oficial|hd|4k/gi, '').replace(/remastered|remaster|live|en vivo/gi, '').trim();
 
-// --- ACTUALIZADO: Ahora acepta y guarda el avatar de quien pidió la canción ---
 const createSong = (video, artistOverride = null, requester = 'Motor IA', requesterAvatar = null) => {
     const artist = artistOverride || cleanArtistName(video.author?.name || "Desconocido");
     const safeUrl = video.url || `https://www.youtube.com/watch?v=${video.videoId}`;
@@ -508,8 +493,7 @@ const createSong = (video, artistOverride = null, requester = 'Motor IA', reques
     return {
         title: video.title, artist: artist, url: safeUrl, thumbnail: thumb,
         durationStr: video.timestamp || "0:00", durationSec: video.seconds || 0,
-        videoId: video.videoId, 
-        requester: requester, requesterAvatar: requesterAvatar, hasRealCover: false
+        videoId: video.videoId, requester: requester, requesterAvatar: requesterAvatar, hasRealCover: false
     };
 };
 
@@ -522,9 +506,10 @@ async function startProgressInterval(guildId, vibrantColor) {
     q.progressInterval = setInterval(async () => {
         if (q.playing && q.currentMessage && q.lastSong) {
             if (q.player.state.status === AudioPlayerStatus.Paused) return;
-            const currentMs = q.player.state.resource ? q.player.state.resource.playbackDuration : 0;
             
-            // Stats tiempo de escucha
+            const baseMs = q.lastSong.seekTime ? q.lastSong.seekTime * 1000 : 0;
+            const currentMs = (q.player.state.resource ? q.player.state.resource.playbackDuration : 0) + baseMs;
+            
             if (q.voiceChannel) {
                 let activeUserIds = [];
                 q.voiceChannel.members.forEach(m => { if (!m.user.bot) activeUserIds.push(m.id); });
@@ -541,7 +526,6 @@ async function startProgressInterval(guildId, vibrantColor) {
             );
             if(q.filter && q.filter !== 'clear') embedPlay.setFooter({ text: `⚙️ Filtro Activo: ${q.filter}` });
 
-            // Edición silenciosa (Sticky está en playNext)
             q.currentMessage.edit({ embeds: [embedPlay], components: [row] }).catch(() => {
                 clearInterval(q.progressInterval); q.currentMessage = null;
             });
@@ -566,30 +550,22 @@ async function playNext(guildId) {
 
                 let artistSeed = q.lastSong.realArtist || q.lastSong.artist || "Music";
 
-                // --- INYECTOR DE FAVORITOS (OPCIÓN A Blindada, counter=5, FORCED ARTIST CHANGE) ---
                 if (q.autoplayCount > 0 && q.autoplayCount % 5 === 0) {
                     try {
                         let activeUserIds = [];
                         if (q.voiceChannel) q.voiceChannel.members.forEach(m => { if (!m.user.bot) activeUserIds.push(m.id); });
-                        
                         if (activeUserIds.length > 0) {
-                            // Identificamos al artista actual semilla
                             let currentArtist = q.lastSong.realArtist || q.lastSong.artist || "";
-                            
-                            // Modificamos consulta SQL para excluir al artista actual (forzando cambio)
-                            const { rows } = await pool.query(
-                                'SELECT * FROM likes WHERE user_id = ANY($1::varchar[]) AND LOWER(artist) != LOWER($2)', 
-                                [activeUserIds, currentArtist]
-                            );
+                            const { rows } = await pool.query('SELECT * FROM likes WHERE user_id = ANY($1::varchar[]) AND LOWER(artist) != LOWER($2)', [activeUserIds, currentArtist]);
                             
                             if (rows.length > 0) {
                                 const randomLike = rows[Math.floor(Math.random() * rows.length)];
-                                // Búsqueda fuerte para evadir IDs rotos
                                 const searchRes = await yts(`${randomLike.title} ${randomLike.artist} official audio`);
                                 if (searchRes && searchRes.videos.length > 0) {
                                     q.autoplayCount++;
-                                    // Inyectamos con counter reiniciado implícitamente por el flujo
-                                    q.songs.push(createSong(searchRes.videos[0], randomLike.artist, i18n[l].bot_magic_liked, null));
+                                    let favSong = createSong(searchRes.videos[0], randomLike.artist, i18n[l].bot_magic_liked, null);
+                                    favSong.isAutoplay = true; // FIX Estadísticas
+                                    q.songs.push(favSong);
                                     return playNext(guildId);
                                 }
                             }
@@ -597,11 +573,9 @@ async function playNext(guildId) {
                     } catch (errLike) { console.error("[AUTOPLAY] Error inyectando favorito:", errLike.message); }
                 }
 
-                // --- AUTOPLAY ESTRICTO (OPCIÓN A: Fiel al artista semilla) ---
                 const r = await yts(`"${artistSeed}" "Topic"`);
                 let validVideos = r.videos.slice(0, 20).filter(v => {
-                    const vTitle = v.title.toLowerCase(); 
-                    const vAuthor = v.author.name.toLowerCase();
+                    const vTitle = v.title.toLowerCase(); const vAuthor = v.author.name.toLowerCase();
                     const isOfficialChannel = vAuthor.endsWith(' - topic') || vAuthor.endsWith('vevo') || vAuthor === artistSeed.toLowerCase();
                     return !q.history.includes(v.videoId) && !globalBlacklist.some(term => vTitle.includes(term.toLowerCase())) && !SPAM_WORDS.some(sw => vTitle.includes(sw)) && isOfficialChannel && v.seconds > 90 && v.seconds <= 900;
                 });
@@ -611,8 +585,7 @@ async function playNext(guildId) {
                 if (!nextVideo) {
                     const fallbackRes = await yts(`"${artistSeed}" official audio`);
                     let validFallback = fallbackRes.videos.slice(0, 15).filter(v => {
-                        const vTitle = v.title.toLowerCase(); 
-                        const vAuthor = v.author.name.toLowerCase();
+                        const vTitle = v.title.toLowerCase(); const vAuthor = v.author.name.toLowerCase();
                         const isOfficialChannel = vAuthor.endsWith(' - topic') || vAuthor.endsWith('vevo') || vAuthor.includes(artistSeed.toLowerCase());
                         return !q.history.includes(v.videoId) && !SPAM_WORDS.some(sw => vTitle.includes(sw)) && isOfficialChannel && v.seconds > 90 && v.seconds <= 900;
                     });
@@ -621,8 +594,9 @@ async function playNext(guildId) {
 
                 if (nextVideo) {
                     q.autoplayCount++; 
-                    // Mantenemos al artista semilla original para la próxima búsqueda (Opción A)
-                    q.songs.push(createSong(nextVideo, artistSeed, i18n[l].bot_magic, null));
+                    let autoSong = createSong(nextVideo, artistSeed, i18n[l].bot_magic, null);
+                    autoSong.isAutoplay = true; // FIX Estadísticas
+                    q.songs.push(autoSong);
                     return playNext(guildId);
                 } else { q.playing = false; return; }
             } catch (e) { console.error("[AUTOPLAY ERROR CRÍTICO]:", e.message); q.playing = false; return; }
@@ -632,7 +606,6 @@ async function playNext(guildId) {
     const song = q.songs[0];
     q.lastSong = song;
 
-    // --- BÚSQUEDA APPLE MUSIC (PORTADA 600x600) ---
     if (!song.hasRealCover && !song.isTrivia) {
         try {
             const query = encodeURIComponent(`${cleanSongName(song.title)} ${song.artist}`);
@@ -643,14 +616,13 @@ async function playNext(guildId) {
         song.hasRealCover = true;
     }
 
-    // Sticky Player: Borramos el viejo si existe, startStream mandará el nuevo abajo
     if (q.textChannel && q.currentMessage) {
         q.currentMessage.delete().catch(() => {});
         q.currentMessage = null;
     }
 
-    // Stats solicitado
-    if (q.voiceChannel && !song.isTrivia) {
+    // FIX Estadísticas: Se ignora si es Autoplay
+    if (q.voiceChannel && !song.isTrivia && !song.isAutoplay) {
         let activeUserIds = [];
         q.voiceChannel.members.forEach(m => { if (!m.user.bot) activeUserIds.push(m.id); });
         if (activeUserIds.length > 0) {
@@ -659,81 +631,68 @@ async function playNext(guildId) {
         }
     }
 
-    // Arrancamos el generador gráfico y streaming
     startStream(song, guildId, l);
 }
 
-// --- REESCRITURA COMPLETA MOTOR GRÁFICO ÉLITE (startStream) ---
 async function startStream(song, guildId, l) {
     const q = globalQueues.get(guildId);
     if (!q) return;
 
     try {
-        // --- MOTOR GRÁFICO CANVAS (Generación de Tarjeta 1280x720) ---
         const canvas = createCanvas(1280, 720);
         const ctx = canvas.getContext('2d');
         
-        // --- ACTUALIZADO: Máxima calidad para evitar desenfoque en la vista de miniatura de Discord ---
         ctx.quality = 'best';
         ctx.patternQuality = 'best';
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         
-        // 1. Descargar imagen y extraer colores
         const imgBuffer = await request(song.thumbnail).then(res => res.body.arrayBuffer()).then(ab => Buffer.from(ab));
         const mainImage = await loadImage(imgBuffer);
         const palette = await Vibrant.from(imgBuffer).getPalette();
         
-        // --- ACTUALIZADO: Descarga de Avatar si está disponible ---
         let requesterAvatarImg = null;
         if (song.requesterAvatar) {
             try {
                 const avatarBuffer = await request(song.requesterAvatar).then(res => res.body.arrayBuffer()).then(ab => Buffer.from(ab));
                 requesterAvatarImg = await loadImage(avatarBuffer);
-            } catch (e) {} // Si falla, sigue de largo sin avatar
+            } catch (e) {}
         }
 
-        // Colores dinámicos
         const vibrantColorHex = palette.Vibrant ? palette.Vibrant.hex : '#57F287';
         const vibrantColorInt = parseInt(vibrantColorHex.replace('#', '0x'));
         const darkVibrantColorHex = palette.DarkVibrant ? palette.DarkVibrant.hex : '#1e1f22';
 
-        // 2. Fondo: Degradado dinámico
         const gradient = ctx.createLinearGradient(0, 0, 1280, 720);
         gradient.addColorStop(0, darkVibrantColorHex);
-        gradient.addColorStop(1, '#000000'); // Negro profundo
+        gradient.addColorStop(1, '#000000'); 
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 1280, 720);
 
-        // 3. Portada: Redondeada y con sombra
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 50; ctx.shadowOffsetX = 10; ctx.shadowOffsetY = 15;
         const imgSize = 500; const imgX = 80; const imgY = (720 - imgSize) / 2;
         ctxMenuRoundedImage(ctx, imgX, imgY, imgSize, imgSize, 30);
         ctx.clip();
         
-        // --- ACTUALIZADO: Ocultar la portada oficial si estamos en modo Trivia ---
         if (song.isTrivia) {
             ctx.fillStyle = '#1e1f22';
             ctx.fillRect(imgX, imgY, imgSize, imgSize);
-            ctx.restore(); // Quitamos el clip/sombra para el texto interior
+            ctx.restore(); 
             ctx.save();
             ctx.font = 'bold 80px sans-serif'; ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
             ctx.fillText("TRIVIA", imgX + (imgSize/2), imgY + (imgSize/2) + 25);
         } else {
             ctx.drawImage(mainImage, imgX, imgY, imgSize, imgSize);
         }
-        ctx.restore(); // Reset sombras y clip
+        ctx.restore();
 
-        // 4. Textos Élite Inteligentes
-        const textX = imgX + imgSize + 70; // Anclaje a la derecha de la imagen
-        const maxWidth = 1280 - textX - 50; // Ancho máximo disponible (aprox 580px)
+        const textX = imgX + imgSize + 70; 
+        const maxWidth = 1280 - textX - 50; 
         
-        // Estado (Reproduciendo)
         ctx.font = 'bold 36px sans-serif'; ctx.fillStyle = vibrantColorHex;
         ctx.fillText(i18n[l].np_title.toUpperCase(), textX, 190);
 
-        // Título de la canción con Salto de Línea Dinámico (Word Wrap)
         ctx.font = 'bold 60px sans-serif'; ctx.fillStyle = '#FFFFFF';
         let displayTitle = getDisplayTitle(song, l);
         
@@ -748,42 +707,33 @@ async function startStream(song, guildId, l) {
         }
         lines.push(line);
 
-        let currentY = 280; // Posición inicial del título
+        let currentY = 280;
         for(let i = 0; i < Math.min(lines.length, 2); i++) {
             let textToDraw = lines[i];
-            // Si hay más de 2 líneas, le ponemos puntos suspensivos al final de la segunda
             if (i === 1 && lines.length > 2) textToDraw = textToDraw.replace(/\s+$/, '') + '...';
             ctx.fillText(textToDraw, textX, currentY);
-            currentY += 70; // Bajamos 70px por cada línea extra de título
+            currentY += 70; 
         }
 
-        // Artista (Se empuja hacia abajo dinámicamente si el título ocupó dos líneas)
         ctx.font = '50px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.fillText(`${i18n[l].artist}: ${getDisplayArtist(song)}`, textX, currentY + 20);
         
-        // --- ACTUALIZADO: Solicitado por + Dibujo del Avatar ---
         ctx.font = 'italic 36px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
         if (requesterAvatarImg) {
             ctx.save();
-            const avatarSize = 60; const avatarY = 560; // Posición final inferior
-            ctxMenuRoundedImage(ctx, textX, avatarY, avatarSize, avatarSize, avatarSize/2); // Corte perfectamente circular
+            const avatarSize = 60; const avatarY = 560; 
+            ctxMenuRoundedImage(ctx, textX, avatarY, avatarSize, avatarSize, avatarSize/2); 
             ctx.clip();
             ctx.drawImage(requesterAvatarImg, textX, avatarY, avatarSize, avatarSize);
             ctx.restore();
-            // Escribimos el nombre al lado del avatar
             ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX + avatarSize + 15, avatarY + 40);
         } else {
-            // Si no hay avatar, lo escribimos normal
             ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX, 600);
         }
 
-        // 5. Convertir a archivo adjunto de Discord
         const attachment = new AttachmentBuilder(canvas.toBuffer(), { name: 'card_musicardi.png' });
 
-        // --- CONSTRUCCIÓN EMBED ÉLITE STICKY ---
-        const embedPlay = UI.panel()
-            .setImage('attachment://card_musicardi.png') // Vinculamos la imagen generada
-            .setColor(vibrantColorInt); // Pintamos la línea del color de la portada
+        const embedPlay = UI.panel().setImage('attachment://card_musicardi.png').setColor(vibrantColorInt);
 
         if(q.filter && q.filter !== 'clear') embedPlay.setFooter({ text: `⚙️ Filtro Activo: ${q.filter}` });
 
@@ -793,18 +743,14 @@ async function startStream(song, guildId, l) {
             new ButtonBuilder().setCustomId('like_song').setLabel(i18n[l].save_btn).setStyle(ButtonStyle.Secondary)
         );
 
-        // Como borramos el mensaje viejo en playNext, aquí SIEMPRE mandamos uno nuevo abajo
         if (q.textChannel) {
             q.currentMessage = await q.textChannel.send({ embeds: [embedPlay], components: [row], files: [attachment] });
-            // Pasamos el color dinámico al intervalo para los Embeds de progreso
             startProgressInterval(guildId, vibrantColorInt);
         }
 
-        // --- MOTOR STREAMING (Mantenemos la lógica blindada) ---
         const ytdlpArgs = ['-f', 'bestaudio', '-q', '--no-playlist', '--cookies', 'cookies.txt', '-o', '-', song.url];
         const ytdlpProcess = spawn('.\\yt-dlp.exe', ytdlpArgs);
 
-        // Motor FFMPEG con Seek (para trivia) y Filtros
         let ffmpegArgs = [];
         if (song.seekTime) ffmpegArgs.push('-ss', song.seekTime.toString());
         
@@ -814,17 +760,14 @@ async function startStream(song, guildId, l) {
 
         const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
         
-        // Blindaje tuberías (Silenciamos EPIPE al hacer saltos/skip)
         ytdlpProcess.stdout.on('error', (err) => { if (err.code === 'EPIPE') return; });
         ffmpegProcess.stdin.on('error', (err) => { if (err.code === 'EPIPE') return; });
         ytdlpProcess.stdout.pipe(ffmpegProcess.stdin);
         
         q.currentProcess = { ytdlp: ytdlpProcess, ffmpeg: ffmpegProcess };
         
-        // Si yt-dlp close con error, forzamos idle para saltar canción
         ytdlpProcess.on('close', (code) => {
             if (code !== 0 && code !== null && q.playing) {
-                console.log(`[AUTO-SKIP] Pista bloqueada (Código: ${code}). Saltando...`);
                 q.player.stop(); 
             }
         });
@@ -839,7 +782,6 @@ async function startStream(song, guildId, l) {
         q.history.push(song.videoId); q.titleHistory.push(cleanSongName(song.realTitle || song.title)); 
         if (q.history.length > 50) q.history.shift();
 
-        // Actualizar estado de voz por API direct
         setTimeout(() => {
             if (q.voiceChannel) {
                 const statusText = song.isTrivia ? i18n[l].mystery_track : `${i18n[l].playing_status}${song.title}`;
@@ -851,7 +793,6 @@ async function startStream(song, guildId, l) {
 
     } catch (error) {
         console.error("[GRÁFICOS ERROR CRÍTICO]:", error);
-        // Si falla la generación gráfica, saltamos canción para no trabar el bot
         q.songs.shift(); playNext(guildId);
     }
 }
@@ -859,14 +800,12 @@ async function startStream(song, guildId, l) {
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
 
-    // --- NUEVO: Interceptor de Autocompletado de Comandos ---
     if (interaction.isAutocomplete()) {
         const commandName = interaction.commandName;
         if (commandName === 'playlist') {
             const focusedValue = interaction.options.getFocused();
             const userId = interaction.user.id;
             try {
-                // Buscamos en PostgreSQL las playlists de ESTE usuario que coincidan con lo que está escribiendo
                 const res = await pool.query(`SELECT name FROM user_playlists WHERE user_id = $1 AND LOWER(name) LIKE LOWER($2) LIMIT 10`, [userId, `${focusedValue}%`]);
                 await interaction.respond(res.rows.map(row => ({ name: row.name, value: row.name })));
             } catch (e) { await interaction.respond([]); }
@@ -884,7 +823,6 @@ client.on(Events.InteractionCreate, async interaction => {
         const q = getQueue(guildId);
         const userId = interaction.user.id;
         const userName = interaction.user.globalName || interaction.user.username;
-        // --- NUEVO: Capturamos la URL del avatar del usuario que lanzó el comando en alta calidad ---
         const userAvatar = interaction.user.displayAvatarURL({ extension: 'png', size: 128, forceStatic: true });
 
         if (interaction.isButton()) {
@@ -900,8 +838,8 @@ client.on(Events.InteractionCreate, async interaction => {
             if (interaction.customId === 'pause_resume') {
                 if (!await isAuthorized(interaction, q)) return interaction.reply({ embeds: [UI.error(i18n[l].dj_required)], flags: MessageFlags.Ephemeral });
                 
-                const currentMs = q.player.state.resource ? q.player.state.resource.playbackDuration : 0;
-                // Usamos color neutro para pausa momentánea
+                const baseMs = q.lastSong.seekTime ? q.lastSong.seekTime * 1000 : 0;
+                const currentMs = (q.player.state.resource ? q.player.state.resource.playbackDuration : 0) + baseMs;
                 const embedPlay = createNowPlayingEmbed(q.lastSong, currentMs, l, 0x2b2d31);
 
                 if (q.player.state.status === AudioPlayerStatus.Playing) { 
@@ -932,7 +870,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (!await isAuthorized(interaction, q)) return interaction.reply({ embeds: [UI.error(i18n[l].dj_required)], flags: MessageFlags.Ephemeral });
                 if (!q.playing) return interaction.reply({ embeds: [UI.error(i18n[l].nothing_playing)], flags: MessageFlags.Ephemeral });
                 
-                // Matamos procesos para skip rápido
                 if (q.currentProcess) {
                     try { if (q.currentProcess.ytdlp) q.currentProcess.ytdlp.kill(); if (q.currentProcess.ffmpeg) q.currentProcess.ffmpeg.kill(); } catch(e){}
                     q.currentProcess = null;
@@ -960,7 +897,6 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!interaction.isChatInputCommand()) return;
         const command = interaction.commandName;
 
-        // DJ / Admin checks
         if (["skip", "stop", "remove", "filter", "247"].includes(command)) {
             if (!await isAuthorized(interaction, q)) {
                 await interaction.editReply({ embeds: [UI.error(i18n[l].dj_required)] });
@@ -1085,7 +1021,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const res = await pool.query('SELECT title FROM likes WHERE user_id = $1 ORDER BY id ASC', [userId]);
             if (res.rows.length === 0) return interaction.editReply({ embeds: [UI.error(i18n[l].list_empty)] });
             const text = res.rows.map((s, i) => `**${i + 1}.** ${s.title}`).join("\n");
-            // List no se borra
             interaction.editReply({ embeds: [UI.info(i18n[l].your_likes, text.substring(0, 4000))] });
         }
 
@@ -1117,14 +1052,11 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!q.playing || !q.lastSong) return interaction.editReply({ embeds: [UI.error(i18n[l].nothing_playing)] });
             const fetchedMsg = await interaction.fetchReply();
             
-            // Si el mensaje sticky viejo es diferente al nuevo comando, borramos el viejo
             if (q.currentMessage && q.currentMessage.id !== fetchedMsg.id) q.currentMessage.delete().catch(() => {});
             q.currentMessage = fetchedMsg; 
 
-            // startStream se encargará de mandar el nuevo embed gráfico abajo.
-            // Para ahorrar RAM, recreamos el stream para disparar startStream gráfico.
             q.songs.unshift(q.lastSong);
-            q.player.stop(); // Idle->playNext->startStream(Gráfico)
+            q.player.stop(); 
         }
 
         if (command === "lyrics") {
@@ -1140,7 +1072,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (!searchRes.length) return interaction.editReply({ embeds: [UI.error(i18n[l].lyrics_not_found)] });
                 let lyrics = await searchRes[0].lyrics();
                 if (lyrics.includes('[')) lyrics = lyrics.substring(lyrics.indexOf('['));
-                // Lyrics no se borra
                 interaction.editReply({ embeds: [UI.info(`${i18n[l].lyrics_title}: ${searchRes[0].title}`, lyrics.substring(0, 4000))] });
             } catch (e) { interaction.editReply({ embeds: [UI.error(i18n[l].no_results)] }); }
         }
@@ -1159,14 +1090,12 @@ client.on(Events.InteractionCreate, async interaction => {
             if (topUserRes.rows.length > 0) statsMsg += `> **${i18n[l].stats_top_user}** <@${topUserRes.rows[0].user_id}> (${topUserRes.rows[0].count})\n\n`;
             statsMsg += `**${i18n[l].stats_top_artists}**\n`;
             topArtistsRes.rows.forEach((row, index) => { statsMsg += `\`${(index + 1).toString().padStart(2, '0')}.\` ${row.artist} — ${row.count} likes\n`; });
-            // Stats no se borra
             interaction.editReply({ embeds: [UI.info(i18n[l].stats_title, statsMsg)] });
         }
 
         if (command === "history") {
             if (q.playedHistory.length === 0) return interaction.editReply({ embeds: [UI.error(i18n[l].history_empty)] });
             const historyText = q.playedHistory.map((s, i) => `\`${(i + 1).toString().padStart(2, '0')}.\` ${s}`).join("\n"); 
-            // History no se borra
             interaction.editReply({ embeds: [UI.info(i18n[l].history_title, historyText)] });
         }
 
@@ -1327,7 +1256,6 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!await checkPremium(guildId)) return interaction.editReply({ embeds: [UI.info(i18n[l].access_denied, i18n[l].premium_only)] });
             const type = interaction.options.getString('tipo');
             q.filter = type;
-            // Forzamos reinicio stream con filtro
             if (q.playing && q.lastSong) {
                 q.songs.unshift(q.lastSong);
                 if (q.currentProcess) {
@@ -1343,7 +1271,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const name = interaction.options.getString('nombre').trim();
             if (action === 'save') {
                 if (q.songs.length === 0) return interaction.editReply({ embeds: [UI.error(i18n[l].queue_empty)] });
-                // --- ACTUALIZADO: Guardamos también el avatar de quien pidió la canción originalmente ---
                 const plData = JSON.stringify(q.songs.map(s => ({ title: s.title, url: s.url, videoId: s.videoId, artist: s.artist, requester: s.requester, requesterAvatar: s.requesterAvatar })));
                 await pool.query(`INSERT INTO user_playlists (user_id, name, songs) VALUES ($1, $2, $3)`, [userId, name, plData]);
                 interaction.editReply({ embeds: [UI.success(`${i18n[l].pl_saved}\n> **${name}**`)] });
@@ -1351,7 +1278,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 const res = await pool.query(`SELECT songs FROM user_playlists WHERE user_id = $1 AND name = $2 LIMIT 1`, [userId, name]);
                 if (res.rows.length === 0) return interaction.editReply({ embeds: [UI.error(i18n[l].pl_not_found)] });
                 const plSongs = res.rows[0].songs;
-                // --- ACTUALIZADO: Carga el avatar al recrear la canción ---
                 plSongs.forEach(s => q.songs.push(createSong(s, s.artist, `${s.requester} (PL)`, s.requesterAvatar)));
                 interaction.editReply({ embeds: [UI.success(`${i18n[l].pl_loaded}\n> **${name}** (${plSongs.length} pistas)`)] });
                 if (!q.playing) playNext(guildId);
@@ -1370,14 +1296,12 @@ client.on(Events.InteractionCreate, async interaction => {
             const topArtist = topRes.rows.length > 0 ? topRes.rows[0].artist : 'N/A';
 
             let desc = i18n[l].profile_stats(hours, stats.songs_played, likesCount, topArtist);
-            // Profile no se borra
             return interaction.editReply({ embeds: [UI.info(i18n[l].profile_title, desc)] });
         }
 
         if (command === "trivia") {
             if (q.playing) return interaction.editReply({ embeds: [UI.error(i18n[l].trivia_stop)] });
             
-            // Sincronizando aviso
             await interaction.editReply({ embeds: [UI.info(i18n[l].sync_data, i18n[l].trivia_start + "...")] });
 
             const res = await pool.query('SELECT artist FROM likes ORDER BY RANDOM() LIMIT 1');
@@ -1401,7 +1325,6 @@ client.on(Events.InteractionCreate, async interaction => {
             triviaSong.realTitle = targetTitle;
             triviaSong.realArtist = targetArtist;
             
-            // Seek aleatorio
             triviaSong.seekTime = video.seconds > 60 ? Math.floor(Math.random() * (video.seconds - 45)) : 0;
             
             q.songs.push(triviaSong);
@@ -1410,10 +1333,8 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.editReply({ embeds: [UI.info(i18n[l].trivia_start, i18n[l].trivia_desc)] });
             
             const filter = m => !m.author.bot;
-            // Estiramos el collector a 45s totales (30s música + 15s pensar)
             const collector = interaction.channel.createMessageCollector({ filter, time: 45000 }); 
             
-            // Cronómetro Modo Pensar (Pausa a los 30s)
             let thinkTimeout = setTimeout(() => {
                 if (q.playing && q.lastSong && q.lastSong.isTrivia) {
                     q.player.pause();
@@ -1430,9 +1351,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 const tTitle = targetTitle.toLowerCase();
                 const tArtist = targetArtist.toLowerCase();
                 
-                // Adivinanza flexible exigiendo 3 letras
                 if (guess.length >= 3 && (tTitle.includes(guess) || tArtist.includes(guess) || guess.includes(tTitle) || guess.includes(tArtist))) {
-                    clearTimeout(thinkTimeout); // Frena aviso pensar si adivinan rápido
+                    clearTimeout(thinkTimeout); 
                     collector.stop('won');
                     m.reply(i18n[l].trivia_win(m.author.id, targetTitle, targetArtist)).catch(()=>{});
                     q.player.stop(); 
@@ -1467,13 +1387,11 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// --- EVENTO: VOICE STATE UPDATE (Desconexión / Eco-Mode) ---
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
     const guildId = oldState.guild.id;
     const q = globalQueues.get(guildId);
     if (!q || !q.connection) return;
 
-    // 1. Si un moderador desconecta al bot a la fuerza
     if (oldState.channelId && !newState.channelId && newState.id === client.user.id) {
         if (q.progressInterval) clearInterval(q.progressInterval);
         if (q.currentMessage) q.currentMessage.delete().catch(()=>{});
@@ -1488,33 +1406,26 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
         return;
     }
 
-    // 2. Si el canal se queda vacío (sin humanos), Eco-Mode
     const botChannelId = q.connection.joinConfig.channelId;
     const botChannel = oldState.guild.channels.cache.get(botChannelId) || newState.guild.channels.cache.get(botChannelId);
     
     if (botChannel) {
         const humans = botChannel.members.filter(m => !m.user.bot).size;
         if (humans === 0) {
-            // No destruimos la cola, solo pausamos y nos vamos para ahorrar RAM
             if (q.progressInterval) clearInterval(q.progressInterval);
             if (q.currentMessage) q.currentMessage.delete().catch(()=>{});
             if (q.currentProcess) {
                 try { if (q.currentProcess.ytdlp) q.currentProcess.ytdlp.kill(); if (q.currentProcess.ffmpeg) q.currentProcess.ffmpeg.kill(); } catch(e){}
                 q.currentProcess = null;
             }
-            // Mantenemos canciones y settings, pero detenemos reproductor y conexión
             q.player.stop();
             if (q.connection.state.status !== VoiceConnectionStatus.Destroyed) q.connection.destroy();
             q.connection = null; q.playing = false; q.currentMessage = null;
             
-            // Aviso Eco-Mode
             if (q.textChannel) {
                 const l = guildLangs.get(guildId) || 'es';
-                const msg = l === 'es' 
-                    ? "Eco-Mode: Canal vacío. Reproducción detenida para ahorrar RAM."
-                    : "Eco-Mode: Channel empty. Playback stopped to save RAM.";
-                q.textChannel.send({ embeds: [UI.info("Desconexión / Disconnected", msg)] })
-                    .then(m => setTimeout(() => m.delete().catch(()=>{}), MSG_LIFETIME)).catch(()=>{});
+                const msg = l === 'es' ? "Eco-Mode: Canal vacío. Reproducción detenida para ahorrar RAM." : "Eco-Mode: Channel empty. Playback stopped to save RAM.";
+                q.textChannel.send({ embeds: [UI.info("Desconexión / Disconnected", msg)] }).then(m => setTimeout(() => m.delete().catch(()=>{}), MSG_LIFETIME)).catch(()=>{});
             }
         }
     }
@@ -1523,40 +1434,88 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 process.on('unhandledRejection', error => { console.error('[ANTI-CRASH] Promesa sin manejar:', error); });
 process.on('uncaughtException', error => { console.error('[ANTI-CRASH] Excepción no capturada:', error); });
 
-// --- MOTOR DE TRANSMISIÓN EN TIEMPO REAL (WEBSOCKETS) ---
 const { Server } = require("socket.io");
-// Abrimos el puerto 3001 exclusivo para la web
 const io = new Server(3001, { cors: { origin: "*" } });
 
 io.on("connection", (socket) => {
-    // Cuando la web nos dice: "Che, dame el estado del usuario X"
-    socket.on("get_status", (userId) => {
-        let activeQueue = null;
-        let activeGuildName = "";
-
-        // Buscamos en qué canal de voz está metido ese usuario
+    const getUserQueue = (userId) => {
         for (const [guildId, q] of globalQueues.entries()) {
-            if (q.voiceChannel && q.voiceChannel.members.has(userId)) {
-                activeQueue = q;
-                activeGuildName = q.voiceChannel.guild.name;
-                break;
-            }
+            if (q.voiceChannel && q.voiceChannel.members.has(userId)) return { guildId, q };
         }
+        return null;
+    };
 
-        // Si lo encontramos y hay música sonando, mandamos los datos
-        if (activeQueue && activeQueue.playing && activeQueue.lastSong) {
-            const currentMs = activeQueue.player.state.resource ? activeQueue.player.state.resource.playbackDuration : 0;
-            socket.emit("sync_status", {
-                playing: true,
-                song: activeQueue.lastSong,
-                currentMs: currentMs,
-                guildName: activeGuildName,
-                queueLength: activeQueue.songs.length
-            });
+    socket.on("get_status", (userId) => {
+        const data = getUserQueue(userId);
+        if (data && data.q.playing && data.q.lastSong) {
+            const baseMs = data.q.lastSong.seekTime ? data.q.lastSong.seekTime * 1000 : 0;
+            const currentMs = (data.q.player.state.resource ? data.q.player.state.resource.playbackDuration : 0) + baseMs;
+            const isPaused = data.q.player.state.status === AudioPlayerStatus.Paused;
+            socket.emit("sync_status", { playing: true, isPaused: isPaused, song: data.q.lastSong, currentMs: currentMs, guildName: data.q.voiceChannel.guild.name, queueLength: data.q.songs.length });
         } else {
-            // Si no está escuchando nada, mandamos apagado
             socket.emit("sync_status", { playing: false });
         }
+    });
+
+    socket.on("cmd_pause", (userId) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q.playing) return;
+        if (data.q.player.state.status === AudioPlayerStatus.Playing) data.q.player.pause();
+        else if (data.q.player.state.status === AudioPlayerStatus.Paused) data.q.player.unpause();
+    });
+
+    socket.on("cmd_skip", (userId) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q.playing) return;
+        if (data.q.currentProcess) {
+            try { if (data.q.currentProcess.ytdlp) data.q.currentProcess.ytdlp.kill(); if (data.q.currentProcess.ffmpeg) data.q.currentProcess.ffmpeg.kill(); } catch(e){}
+            data.q.currentProcess = null;
+        }
+        data.q.player.stop();
+    });
+
+    socket.on("cmd_like", async (userId) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q.lastSong) return;
+        const song = data.q.lastSong;
+        const likeTitle = song.isTrivia ? song.realTitle : song.title;
+        const likeArtist = song.isTrivia ? song.realArtist : song.artist;
+        try {
+            const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND video_id = $2', [userId, song.videoId]);
+            if (check.rows.length === 0) {
+                await pool.query('INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4)', [userId, song.videoId, likeTitle, likeArtist]);
+            }
+        } catch (e) { console.error("[WEB LIKE ERROR]:", e); }
+    });
+
+    socket.on("cmd_seek", ({ userId, targetSec }) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q.playing || !data.q.lastSong) return;
+
+        data.q.lastSong.seekTime = targetSec;
+        data.q.songs.unshift(data.q.lastSong);
+
+        if (data.q.currentProcess) {
+            try { if (data.q.currentProcess.ytdlp) data.q.currentProcess.ytdlp.kill(); if (data.q.currentProcess.ffmpeg) data.q.currentProcess.ffmpeg.kill(); } catch(e){}
+            data.q.currentProcess = null;
+        }
+        data.q.player.stop(); 
+    });
+
+    socket.on("cmd_search", async (query) => {
+        try {
+            const r = await yts(query);
+            socket.emit("search_results", r.videos.slice(0, 6)); 
+        } catch(e) { socket.emit("search_results", []); }
+    });
+
+    socket.on("cmd_play_specific", ({ userId, video, userName, userAvatar }) => {
+        const data = getUserQueue(userId);
+        if (!data) return; 
+        
+        const newSong = createSong(video, null, userName, userAvatar);
+        data.q.songs.push(newSong);
+        if (!data.q.playing) playNext(data.guildId);
     });
 });
 
