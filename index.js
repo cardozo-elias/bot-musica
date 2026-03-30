@@ -1529,7 +1529,18 @@ process.on('uncaughtException', error => { console.error('[ANTI-CRASH] Excepció
 const { Server } = require("socket.io");
 const io = new Server(3001, { 
     cors: { 
-        origin: "https://musicardi-web.vercel.app",
+        // Usamos una función para aceptar cualquier subdominio de Vercel y localhost
+        origin: (origin, callback) => {
+            const allowedOrigins = [
+                "https://musicardi-web.vercel.app",
+                "http://localhost:3000"
+            ];
+            if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+                callback(null, true);
+            } else {
+                callback(new Error("Not allowed by CORS"));
+            }
+        },
         methods: ["GET", "POST"],
         credentials: true
     } 
