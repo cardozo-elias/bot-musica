@@ -1559,16 +1559,22 @@ io.on("connection", (socket) => {
         return null;
     };
 
-    const getUserQueue = (userId) => {
-        for (const [guildId, q] of globalQueues.entries()) {
-            if (q.voiceChannel && q.voiceChannel.members.has(userId)) return { guildId, q };
+    // --- Helper Mejorado ---
+    const getTargetQueue = (userId, guildId) => {
+        // 1. Si el usuario está mirando un servidor específico en la web, priorizamos ese
+        if (guildId && globalQueues.has(guildId)) {
+            return { guildId, q: globalQueues.get(guildId) };
+        }
+        // 2. Si no hay guildId o el bot no está ahí, buscamos dónde está el usuario físicamente (Voz)
+        for (const [id, q] of globalQueues.entries()) {
+            if (q.voiceChannel && q.voiceChannel.members.has(userId)) return { guildId: id, q };
         }
         return null;
     };
 
-    // --- Status general (Añade cola para la web) ---
-    socket.on("get_status", (userId) => {
-        const data = getUserQueue(userId);
+    socket.on("get_status", ({ userId, guildId }) => {
+        const data = getTargetQueue(userId, guildId);
+        
         if (data && data.q.playing && data.q.lastSong) {
             const baseMs = data.q.lastSong.seekTime ? data.q.lastSong.seekTime * 1000 : 0;
             const currentMs = (data.q.player.state.resource ? data.q.player.state.resource.playbackDuration : 0) + baseMs;
@@ -1590,7 +1596,8 @@ io.on("connection", (socket) => {
                 queueList: nextSongs 
             });
         } else {
-            socket.emit("sync_status", { playing: false });
+            // MUY IMPORTANTE: Si no hay nada, enviamos playing: false para limpiar la web
+            socket.emit("sync_status", { playing: false, song: null, queueList: [] });
         }
     });
 
@@ -1817,14 +1824,17 @@ io.on("connection", (socket) => {
             }
         }
         
-        // FIX BARRA DE PROGRESO: Si reproducimos un "Favorito", buscamos en YT para recuperar sus segundos.
+        // REFRESH DE METADATOS: Si el video no tiene duración (ej: viene de un Like), lo buscamos en YT
         let finalVideo = video;
         if (video.seconds === undefined && video.durationSec === undefined) {
             try {
                 const searchRes = await yts({ videoId: video.videoId });
                 if (searchRes) {
                     finalVideo = searchRes;
-                    finalVideo.author = searchRes.author.name; 
+                    // Parche para asegurar que el nombre del autor no se pierda
+                    if (searchRes.author && typeof searchRes.author === 'object') {
+                        finalVideo.author = searchRes.author.name;
+                    }
                 }
             } catch (e) { console.error("[YTS RECOVER ERROR]:", e); }
         }
@@ -1832,8 +1842,8 @@ io.on("connection", (socket) => {
         const newSong = createSong(finalVideo, null, userName, userAvatar);
         q.songs.push(newSong);
         if (!q.playing) playNext(targetGuildId);
-    });
+  });
 
-}); // <-- ESTA ES LA LLAVE QUE CIERRA CORRECTAMENTE TODO EL BLOQUE
+});
 
 client.login(process.env.TOKEN);
