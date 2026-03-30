@@ -34,10 +34,11 @@ const UI = {
     panel: () => new EmbedBuilder().setColor(0x2b2d31)
 };
 
+// --- NUEVOS TEXTOS DE AUTOPLAY AÑADIDOS AL DICCIONARIO ---
 const i18n = {
     'es': {
         welcome: "Configuración Inicial Requerida",
-        welcome_desc: "Por favor, un Administrador debe seleccionar el idioma principal para los mensajes de la interfaz en este servidor.\n\n*Los comandos (/) se traducirán automáticamente según tu cliente.*",
+        welcome_desc: "Por favor, un Administrador debe seleccionar el idioma principal para los mensajes de la interfaz en este servidor.",
         saved: "El idioma de la interfaz ha sido configurado a **Español**.",
         joined: "Conexión establecida con el canal de voz.",
         no_voice: "Debes estar conectado a un canal de voz para usar este comando.",
@@ -145,11 +146,15 @@ const i18n = {
         trivia_timeout: (title, artist) => `⏰ Se acabó el tiempo. Era **${title}** de **${artist}**.`,
         radio_start: "Transmisión global iniciada:",
         mystery_track: "❓ Pista Misteriosa",
-        playing_status: "Reproduciendo: "
+        playing_status: "Reproduciendo: ",
+        queue_ended: "Cola de Reproducción Finalizada",
+        autoplay_offer_prem: "¿Te quedaste sin música? Activa el **Autoplay Inteligente** para seguir escuchando pistas similares sin interrupciones.",
+        autoplay_offer_free: `¿Te quedaste sin música? Activa el **Autoplay** (5 pistas gratis) o adquiere Premium en [nuestro portal](${PATREON_LINK}) para reproducción infinita.`,
+        btn_enable_autoplay: "Activar Autoplay"
     },
     'en': {
         welcome: "Initial Setup Required",
-        welcome_desc: "Please have an Administrator select the main language for the interface messages in this server.\n\n*Slash commands (/) will auto-translate based on your client.*",
+        welcome_desc: "Please have an Administrator select the main language for the interface messages in this server.",
         saved: "Interface language has been set to **English**.",
         joined: "Connection established with voice channel.",
         no_voice: "You must be connected to a voice channel to use this command.",
@@ -257,7 +262,11 @@ const i18n = {
         trivia_timeout: (title, artist) => `⏰ Time's up. It was **${title}** by **${artist}**.`,
         radio_start: "Global broadcast started:",
         mystery_track: "❓ Mystery Track",
-        playing_status: "Playing: "
+        playing_status: "Playing: ",
+        queue_ended: "Playback Queue Ended",
+        autoplay_offer_prem: "Out of music? Enable **Smart Autoplay** to keep listening to similar tracks seamlessly.",
+        autoplay_offer_free: `Out of music? Enable **Autoplay** (5 free tracks) or upgrade to Premium at [our portal](${PATREON_LINK}) for infinite playback.`,
+        btn_enable_autoplay: "Enable Autoplay"
     }
 };
 
@@ -483,17 +492,54 @@ const createNowPlayingEmbed = (song, currentMs, l = 'es', dynamicColor = 0x2b2d3
     return embed;
 };
 
-const cleanArtistName = (name) => name.replace(/VEVO$| - Topic$|官方頻道$|Oficial$|Official$/i, '').trim();
-const cleanSongName = (name) => name.toLowerCase().replace(/\(.*\)|\[.*\]/g, '').replace(/official video|music video|lyric video|video oficial|hd|4k/gi, '').replace(/remastered|remaster|live|en vivo/gi, '').trim();
+const cleanArtistName = (name) => {
+    if (!name) return "";
+    return name.replace(/VEVO$| - Topic$|官方頻道$|Oficial$|Official$/i, '').trim();
+};
+
+const cleanSongName = (name) => {
+    if (!name) return "";
+    // Esta maravilla elimina TODO lo que esté entre paréntesis o corchetes
+    // y quita palabras clave como "official video" para que iTunes y Genius no fallen.
+    return name.toLowerCase()
+        .replace(/\[.*?\]|\(.*?\)/g, '') 
+        .replace(/official video|music video|lyric video|official audio|visualizer|video oficial|hd|4k|remastered|live/gi, '')
+        .trim();
+};
 
 const createSong = (video, artistOverride = null, requester = 'Motor IA', requesterAvatar = null) => {
-    const artist = artistOverride || cleanArtistName(video.author?.name || "Desconocido");
+    let rawAuthor = (typeof video.author === 'string') ? video.author : (video.author?.name || "");
+    let artist = artistOverride || cleanArtistName(rawAuthor);
+
+    if ((!artist || artist === "Desconocido" || artist === "Artista Desconocido") && video.title.includes('-')) {
+        artist = video.title.split('-')[0].trim();
+    }
+    if (!artist) artist = "Artista Desconocido";
+
     const safeUrl = video.url || `https://www.youtube.com/watch?v=${video.videoId}`;
     let thumb = video.videoId ? `https://img.youtube.com/vi/${video.videoId}/hqdefault.jpg` : (video.thumbnail || video.image || 'https://i.imgur.com/Q2v1vV7.png');
+    
+    // FIX DURACIÓN FINAL: Mapeo exhaustivo
+    let duration = video.seconds || video.durationSec || (video.duration ? video.duration.seconds : 0) || 0;
+    
+    let durationString = video.timestamp || video.durationStr || (video.duration ? video.duration.timestamp : null) || "0:00";
+    if ((!durationString || durationString === "0:00") && duration > 0) {
+        const m = Math.floor(duration / 60);
+        const s = duration % 60;
+        durationString = `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
     return {
-        title: video.title, artist: artist, url: safeUrl, thumbnail: thumb,
-        durationStr: video.timestamp || "0:00", durationSec: video.seconds || 0,
-        videoId: video.videoId, requester: requester, requesterAvatar: requesterAvatar, hasRealCover: false
+        title: video.title, 
+        artist: artist, 
+        url: safeUrl, 
+        thumbnail: thumb,
+        durationStr: durationString, 
+        durationSec: duration, 
+        videoId: video.videoId, 
+        requester: requester, 
+        requesterAvatar: requesterAvatar, 
+        hasRealCover: false 
     };
 };
 
@@ -533,6 +579,7 @@ async function startProgressInterval(guildId, vibrantColor) {
     }, 10000); 
 }
 
+// --- ACTUALIZADO: Mensaje de Venta y Re-ignición ---
 async function playNext(guildId) {
     const q = globalQueues.get(guildId);
     if (!q) return;
@@ -564,13 +611,13 @@ async function playNext(guildId) {
                                 if (searchRes && searchRes.videos.length > 0) {
                                     q.autoplayCount++;
                                     let favSong = createSong(searchRes.videos[0], randomLike.artist, i18n[l].bot_magic_liked, null);
-                                    favSong.isAutoplay = true; // FIX Estadísticas
+                                    favSong.isAutoplay = true;
                                     q.songs.push(favSong);
                                     return playNext(guildId);
                                 }
                             }
                         }
-                    } catch (errLike) { console.error("[AUTOPLAY] Error inyectando favorito:", errLike.message); }
+                    } catch (errLike) {}
                 }
 
                 const r = await yts(`"${artistSeed}" "Topic"`);
@@ -595,24 +642,43 @@ async function playNext(guildId) {
                 if (nextVideo) {
                     q.autoplayCount++; 
                     let autoSong = createSong(nextVideo, artistSeed, i18n[l].bot_magic, null);
-                    autoSong.isAutoplay = true; // FIX Estadísticas
+                    autoSong.isAutoplay = true;
                     q.songs.push(autoSong);
                     return playNext(guildId);
                 } else { q.playing = false; return; }
-            } catch (e) { console.error("[AUTOPLAY ERROR CRÍTICO]:", e.message); q.playing = false; return; }
-        } else { q.playing = false; return; }
+            } catch (e) { q.playing = false; return; }
+        } else { 
+            q.playing = false; 
+            
+            if (q.textChannel && q.lastSong) {
+                const isPrem = await checkPremium(guildId);
+                const desc = isPrem ? i18n[l].autoplay_offer_prem : i18n[l].autoplay_offer_free;
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('enable_autoplay_btn').setLabel(i18n[l].btn_enable_autoplay).setStyle(ButtonStyle.Success)
+                );
+                
+                q.textChannel.send({ embeds: [UI.info(i18n[l].queue_ended, desc)], components: [row] })
+                    .then(m => setTimeout(()=> m.delete().catch(()=>{}), MSG_LIFETIME)).catch(()=>{});
+            }
+            return; 
+        }
     }
 
     const song = q.songs[0];
     q.lastSong = song;
 
+    // FIX PORTADAS ITUNES: Buscamos la portada PERO no alteramos el resto de los datos de la canción
     if (!song.hasRealCover && !song.isTrivia) {
         try {
-            const query = encodeURIComponent(`${cleanSongName(song.title)} ${song.artist}`);
+            // Limpiamos el título antes de buscar en iTunes para que encuentre la portada correcta
+            const cleanTitleForiTunes = cleanSongName(song.title);
+            const query = encodeURIComponent(`${cleanTitleForiTunes} ${song.artist}`);
             const res = await request(`https://itunes.apple.com/search?term=${query}&entity=song&limit=1`);
             const data = await res.body.json();
-            if (data.results && data.results.length > 0) song.thumbnail = data.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
-        } catch (e) {}
+            if (data.results && data.results.length > 0) {
+                song.thumbnail = data.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
+            }
+        } catch (e) { console.log("[ITUNES ERROR]", e.message); }
         song.hasRealCover = true;
     }
 
@@ -621,7 +687,6 @@ async function playNext(guildId) {
         q.currentMessage = null;
     }
 
-    // FIX Estadísticas: Se ignora si es Autoplay
     if (q.voiceChannel && !song.isTrivia && !song.isAutoplay) {
         let activeUserIds = [];
         q.voiceChannel.members.forEach(m => { if (!m.user.bot) activeUserIds.push(m.id); });
@@ -649,7 +714,14 @@ async function startStream(song, guildId, l) {
         
         const imgBuffer = await request(song.thumbnail).then(res => res.body.arrayBuffer()).then(ab => Buffer.from(ab));
         const mainImage = await loadImage(imgBuffer);
-        const palette = await Vibrant.from(imgBuffer).getPalette();
+        
+        // Extracción segura de la paleta con Vibrant
+        let palette = {};
+        try {
+            palette = await Vibrant.from(imgBuffer).getPalette();
+        } catch (error) {
+            console.error('[VIBRANT ERROR]: Fallo al extraer paleta, usando color por defecto.', error.message);
+        }
         
         let requesterAvatarImg = null;
         if (song.requesterAvatar) {
@@ -671,7 +743,9 @@ async function startStream(song, guildId, l) {
 
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 50; ctx.shadowOffsetX = 10; ctx.shadowOffsetY = 15;
-        const imgSize = 500; const imgX = 80; const imgY = (720 - imgSize) / 2;
+        
+        // Imagen 60px más grande para mayor claridad en miniatura
+        const imgSize = 560; const imgX = 60; const imgY = (720 - imgSize) / 2;
         ctxMenuRoundedImage(ctx, imgX, imgY, imgSize, imgSize, 30);
         ctx.clip();
         
@@ -680,20 +754,21 @@ async function startStream(song, guildId, l) {
             ctx.fillRect(imgX, imgY, imgSize, imgSize);
             ctx.restore(); 
             ctx.save();
-            ctx.font = 'bold 80px sans-serif'; ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
-            ctx.fillText("TRIVIA", imgX + (imgSize/2), imgY + (imgSize/2) + 25);
+            ctx.font = 'bold 90px sans-serif'; ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
+            ctx.fillText("TRIVIA", imgX + (imgSize/2), imgY + (imgSize/2) + 30);
         } else {
             ctx.drawImage(mainImage, imgX, imgY, imgSize, imgSize);
         }
         ctx.restore();
 
-        const textX = imgX + imgSize + 70; 
-        const maxWidth = 1280 - textX - 50; 
+        const textX = imgX + imgSize + 60; 
+        const maxWidth = 1280 - textX - 40; 
         
-        ctx.font = 'bold 36px sans-serif'; ctx.fillStyle = vibrantColorHex;
-        ctx.fillText(i18n[l].np_title.toUpperCase(), textX, 190);
+        // Letras más grandes para la miniatura de Discord
+        ctx.font = 'bold 40px sans-serif'; ctx.fillStyle = vibrantColorHex;
+        ctx.fillText(i18n[l].np_title.toUpperCase(), textX, 180);
 
-        ctx.font = 'bold 60px sans-serif'; ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 75px sans-serif'; ctx.fillStyle = '#FFFFFF';
         let displayTitle = getDisplayTitle(song, l);
         
         const words = displayTitle.split(' ');
@@ -712,23 +787,23 @@ async function startStream(song, guildId, l) {
             let textToDraw = lines[i];
             if (i === 1 && lines.length > 2) textToDraw = textToDraw.replace(/\s+$/, '') + '...';
             ctx.fillText(textToDraw, textX, currentY);
-            currentY += 70; 
+            currentY += 85; 
         }
 
-        ctx.font = '50px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.font = '55px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.fillText(`${i18n[l].artist}: ${getDisplayArtist(song)}`, textX, currentY + 20);
         
-        ctx.font = 'italic 36px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.font = 'italic 40px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
         if (requesterAvatarImg) {
             ctx.save();
-            const avatarSize = 60; const avatarY = 560; 
+            const avatarSize = 65; const avatarY = 550; 
             ctxMenuRoundedImage(ctx, textX, avatarY, avatarSize, avatarSize, avatarSize/2); 
             ctx.clip();
             ctx.drawImage(requesterAvatarImg, textX, avatarY, avatarSize, avatarSize);
             ctx.restore();
-            ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX + avatarSize + 15, avatarY + 40);
+            ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX + avatarSize + 20, avatarY + 45);
         } else {
-            ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX, 600);
+            ctx.fillText(`${i18n[l].requested_by}: ${song.requester}`, textX, 595);
         }
 
         const attachment = new AttachmentBuilder(canvas.toBuffer(), { name: 'card_musicardi.png' });
@@ -749,7 +824,8 @@ async function startStream(song, guildId, l) {
         }
 
         const ytdlpArgs = ['-f', 'bestaudio', '-q', '--no-playlist', '--cookies', 'cookies.txt', '-o', '-', song.url];
-        const ytdlpProcess = spawn('.\\yt-dlp.exe', ytdlpArgs);
+        // En Linux usamos el comando global 'yt-dlp' directamente
+        const ytdlpProcess = spawn('yt-dlp', ytdlpArgs);
 
         let ffmpegArgs = [];
         if (song.seekTime) ffmpegArgs.push('-ss', song.seekTime.toString());
@@ -832,6 +908,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 await pool.query(`INSERT INTO server_settings (guild_id, language) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET language = $2`, [guildId, chosenLang]);
                 guildLangs.set(guildId, chosenLang);
                 await interaction.update({ embeds: [UI.success(i18n[chosenLang].saved)], components: [] });
+                return;
+            }
+
+            // --- NUEVO: Capturar el botón de Upsell de Autoplay ---
+            if (interaction.customId === 'enable_autoplay_btn') {
+                if (!await isAuthorized(interaction, q)) return interaction.reply({ embeds: [UI.error(i18n[l].dj_required)], flags: MessageFlags.Ephemeral });
+                
+                q.autoplay = true;
+                q.autoplayCount = 0;
+                
+                await interaction.update({ embeds: [UI.success(i18n[l].autoplay_on)], components: [] });
+                
+                // Re-ignición en frío: Si el bot estaba apagado y hay una semilla, arranca solo
+                if (!q.playing && q.songs.length === 0 && q.lastSong) {
+                    playNext(guildId);
+                }
                 return;
             }
 
@@ -1435,9 +1527,27 @@ process.on('unhandledRejection', error => { console.error('[ANTI-CRASH] Promesa 
 process.on('uncaughtException', error => { console.error('[ANTI-CRASH] Excepción no capturada:', error); });
 
 const { Server } = require("socket.io");
-const io = new Server(3001, { cors: { origin: "*" } });
+const io = new Server(3001, { 
+    cors: { 
+        origin: "https://musicardi-web.vercel.app",
+        methods: ["GET", "POST"],
+        credentials: true
+    } 
+});
 
 io.on("connection", (socket) => {
+    
+    // --- Helper ---
+    const findUserVoiceChannel = (userId) => {
+        for (const guild of client.guilds.cache.values()) {
+            const member = guild.members.cache.get(userId);
+            if (member && member.voice.channel) {
+                return { guild: guild, channel: member.voice.channel, member: member };
+            }
+        }
+        return null;
+    };
+
     const getUserQueue = (userId) => {
         for (const [guildId, q] of globalQueues.entries()) {
             if (q.voiceChannel && q.voiceChannel.members.has(userId)) return { guildId, q };
@@ -1445,18 +1555,35 @@ io.on("connection", (socket) => {
         return null;
     };
 
+    // --- Status general (Añade cola para la web) ---
     socket.on("get_status", (userId) => {
         const data = getUserQueue(userId);
         if (data && data.q.playing && data.q.lastSong) {
             const baseMs = data.q.lastSong.seekTime ? data.q.lastSong.seekTime * 1000 : 0;
             const currentMs = (data.q.player.state.resource ? data.q.player.state.resource.playbackDuration : 0) + baseMs;
-            const isPaused = data.q.player.state.status === AudioPlayerStatus.Paused;
-            socket.emit("sync_status", { playing: true, isPaused: isPaused, song: data.q.lastSong, currentMs: currentMs, guildName: data.q.voiceChannel.guild.name, queueLength: data.q.songs.length });
+            
+            const nextSongs = data.q.songs.slice(1, 16).map(s => ({
+                title: s.title,
+                artist: s.artist,
+                thumbnail: s.thumbnail,
+                videoId: s.videoId
+            }));
+
+            socket.emit("sync_status", { 
+                playing: true, 
+                isPaused: data.q.player.state.status === AudioPlayerStatus.Paused, 
+                song: data.q.lastSong, 
+                currentMs: currentMs, 
+                guildName: data.q.voiceChannel.guild.name, 
+                queueLength: data.q.songs.length - 1,
+                queueList: nextSongs 
+            });
         } else {
             socket.emit("sync_status", { playing: false });
         }
     });
 
+    // --- Controles de reproducción ---
     socket.on("cmd_pause", (userId) => {
         const data = getUserQueue(userId);
         if (!data || !data.q.playing) return;
@@ -1505,18 +1632,197 @@ io.on("connection", (socket) => {
     socket.on("cmd_search", async (query) => {
         try {
             const r = await yts(query);
-            socket.emit("search_results", r.videos.slice(0, 6)); 
+            const cleanedVideos = r.videos.slice(0, 6).map(v => ({
+                ...v, author: v.author.name
+            }));
+            socket.emit("search_results", cleanedVideos); 
         } catch(e) { socket.emit("search_results", []); }
     });
 
-    socket.on("cmd_play_specific", ({ userId, video, userName, userAvatar }) => {
-        const data = getUserQueue(userId);
-        if (!data) return; 
-        
-        const newSong = createSong(video, null, userName, userAvatar);
-        data.q.songs.push(newSong);
-        if (!data.q.playing) playNext(data.guildId);
+    // --- Recomendaciones Variadas ---
+    // --- OPTIMIZADO: Recomendaciones secuenciales anti-bloqueo (Fix 429) ---
+    socket.on("get_recommendations", async (userId) => {
+        try {
+            const allArtistsRes = await pool.query('SELECT artist FROM likes WHERE user_id = $1 GROUP BY artist', [userId]);
+            if (allArtistsRes.rows.length === 0) return socket.emit("recommendations_data", { type: 'empty' });
+
+            const randomArtists = allArtistsRes.rows.sort(() => Math.random() - 0.5).slice(0, 10); // Bajamos a 10 para más seguridad
+            let combinedRecs = [];
+
+            // Bucle secuencial con delay para no disparar el límite de YouTube
+            for (const row of randomArtists) {
+                try {
+                    const searchRes = await yts(`"${row.artist}" official audio`);
+                    if (searchRes && searchRes.videos.length > 0) {
+                        const v = searchRes.videos[0];
+                        combinedRecs.push({ 
+                            title: v.title, author: v.author.name, videoId: v.videoId, 
+                            thumbnail: v.thumbnail, url: v.url, timestamp: v.timestamp,
+                            seconds: v.seconds // VITAL PARA LA BARRA
+                        });
+                    }
+                    // Pausa de 200ms entre búsquedas para parecer humanos
+                    await new Promise(r => setTimeout(r, 200)); 
+                } catch (err) {
+                    if (err.message.includes('429')) break; // Si YouTube nos frena, paramos y enviamos lo que ya tenemos
+                }
+            }
+            socket.emit("recommendations_data", { type: 'personalized', seed: randomArtists.map(r => r.artist).slice(0,3).join(", "), tracks: combinedRecs });
+        } catch (e) { socket.emit("recommendations_data", { type: 'error' }); }
     });
-});
+
+    // --- Reproducir Playlist Completa ---
+    socket.on("cmd_play_playlist", async ({ userId, playlistId, userName, userAvatar }) => {
+        try {
+            const res = await pool.query('SELECT songs FROM user_playlists WHERE id = $1 AND user_id = $2', [playlistId, userId]);
+            if (res.rows.length === 0) return;
+
+            const plSongs = res.rows[0].songs;
+            const data = getUserQueue(userId);
+            let targetGuildId, targetVc;
+
+            if (data) {
+                targetGuildId = data.guildId;
+            } else {
+                const vcInfo = findUserVoiceChannel(userId);
+                if (!vcInfo) return;
+                targetGuildId = vcInfo.guild.id;
+                targetVc = vcInfo.channel;
+            }
+
+            const q = getQueue(targetGuildId);
+            
+            if (!q.connection || q.connection.state.status === VoiceConnectionStatus.Destroyed) {
+                if (targetVc) {
+                    q.connection = joinVoiceChannel({ channelId: targetVc.id, guildId: targetGuildId, adapterCreator: targetVc.guild.voiceAdapterCreator });
+                    q.connection.on(VoiceConnectionStatus.Ready, () => { q.connection.subscribe(q.player); });
+                    q.voiceChannel = targetVc;
+                }
+            }
+
+            plSongs.forEach(s => { q.songs.push(createSong(s, s.artist, `${userName} (Web PL)`, userAvatar)); });
+            if (!q.playing) playNext(targetGuildId);
+        } catch (e) { console.error("[WEB PL PLAY ERROR]:", e); }
+    });
+
+    // --- Aplicar Filtros (Acelerado, Bassboost, etc.) ---
+    socket.on("cmd_filter", ({ userId, filterType }) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q) return;
+
+        data.q.filter = filterType;
+        
+        if (data.q.playing && data.q.lastSong) {
+            data.q.songs.unshift(data.q.lastSong);
+            if (data.q.currentProcess) {
+                try { if (data.q.currentProcess.ytdlp) data.q.currentProcess.ytdlp.kill(); if (data.q.currentProcess.ffmpeg) data.q.currentProcess.ffmpeg.kill(); } catch(e){}
+                data.q.currentProcess = null;
+            }
+            data.q.player.stop();
+        }
+    });
+
+    // --- Obtener Letras (Corregido) ---
+    // --- Obtener Letras (Corregido y con limpieza de Genius) ---
+    socket.on("get_lyrics", async (userId) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q.lastSong) {
+            return socket.emit("lyrics_data", { error: "No hay música sonando actualmente." });
+        }
+        
+        const song = data.q.lastSong;
+        const cleanTitle = song.title.replace(/\[.*?\]|\(.*?\)/g, '').trim();
+        const cleanArtist = cleanArtistName(song.artist);
+
+        console.log(`[LYRICS] Buscando en Genius: ${cleanArtist} - ${cleanTitle}`);
+
+        try {
+            let searchRes = await GeniusClient.songs.search(`${cleanArtist} ${cleanTitle}`);
+            
+            if (!searchRes.length) {
+                console.log(`[LYRICS] Falló intento 1. Intentando solo título: ${cleanTitle}`);
+                searchRes = await GeniusClient.songs.search(cleanTitle);
+            }
+            
+            if (searchRes.length > 0) {
+                let lyrics = await searchRes[0].lyrics();
+                
+                // Limpieza agresiva de basura de Genius
+                lyrics = lyrics.replace(/^.*?Lyrics\s*/mi, ''); // Quita "55 Contributors... Lyrics"
+                lyrics = lyrics.replace(/\d*Embed$/, ''); // Quita el Embed final
+                lyrics = lyrics.replace(/You might also like/gi, ''); // Quita sugerencias
+                
+                socket.emit("lyrics_data", { title: searchRes[0].title, lyrics: lyrics });
+            } else {
+                socket.emit("lyrics_data", { error: "No se encontraron letras oficiales en Genius." });
+            }
+        } catch (e) {
+            console.error("[LYRICS ERROR]:", e.message);
+            socket.emit("lyrics_data", { error: "Error al conectar con Genius." });
+        }
+    });
+
+    // --- Reordenamiento de la Cola (Drag & Drop) ---
+    socket.on("cmd_reorder_queue", ({ userId, newQueueIds }) => {
+        const data = getUserQueue(userId);
+        if (!data || !data.q || data.q.songs.length <= 1) return;
+
+        const currentSong = data.q.songs[0];
+        const otherSongs = data.q.songs.slice(1);
+        const songMap = new Map(otherSongs.map(s => [s.videoId, s]));
+        
+        const reorderedRest = newQueueIds.map(id => songMap.get(id)).filter(song => song !== undefined);
+        
+        if (reorderedRest.length === otherSongs.length) {
+            data.q.songs = [currentSong, ...reorderedRest];
+        }
+    });
+
+    // --- Magia de Auto-Join y Recuperación de Datos para la Barra ---
+    socket.on("cmd_play_specific", async ({ userId, video, userName, userAvatar }) => {
+        let data = getUserQueue(userId);
+        let targetGuildId = null;
+        let targetVc = null;
+        let targetTextChannel = null;
+
+        if (data) {
+            targetGuildId = data.guildId;
+        } else {
+            const vcInfo = findUserVoiceChannel(userId);
+            if (!vcInfo) return; 
+            targetGuildId = vcInfo.guild.id;
+            targetVc = vcInfo.channel;
+            targetTextChannel = vcInfo.guild.channels.cache.find(c => c.type === 0 && c.permissionsFor(vcInfo.guild.members.me).has('SendMessages'));
+        }
+
+        const q = getQueue(targetGuildId);
+        
+        if (!q.connection || q.connection.state.status === VoiceConnectionStatus.Destroyed) {
+            if (targetVc) {
+                q.connection = joinVoiceChannel({ channelId: targetVc.id, guildId: targetGuildId, adapterCreator: targetVc.guild.voiceAdapterCreator });
+                q.connection.on(VoiceConnectionStatus.Ready, () => { q.connection.subscribe(q.player); });
+                q.voiceChannel = targetVc;
+                q.textChannel = targetTextChannel || q.textChannel;
+            }
+        }
+        
+        // FIX BARRA DE PROGRESO: Si reproducimos un "Favorito", buscamos en YT para recuperar sus segundos.
+        let finalVideo = video;
+        if (video.seconds === undefined && video.durationSec === undefined) {
+            try {
+                const searchRes = await yts({ videoId: video.videoId });
+                if (searchRes) {
+                    finalVideo = searchRes;
+                    finalVideo.author = searchRes.author.name; 
+                }
+            } catch (e) { console.error("[YTS RECOVER ERROR]:", e); }
+        }
+
+        const newSong = createSong(finalVideo, null, userName, userAvatar);
+        q.songs.push(newSong);
+        if (!q.playing) playNext(targetGuildId);
+    });
+
+}); // <-- ESTA ES LA LLAVE QUE CIERRA CORRECTAMENTE TODO EL BLOQUE
 
 client.login(process.env.TOKEN);
