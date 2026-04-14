@@ -475,7 +475,18 @@ async function fetchGeniusLyrics(title, artist) {
     if (searches.length === 0) return null;
 
     const firstSong = searches[0];
-    const lyrics = await firstSong.lyrics();
+    let lyrics = await firstSong.lyrics();
+
+    if (lyrics) {
+      lyrics = lyrics.replace(/^.*?(Contributors|Translations).*?\n/i, "");
+
+      lyrics = lyrics.replace(/You might also like/gi, "");
+
+      lyrics = lyrics.replace(/\d*Embed.*?$/gi, "");
+
+      lyrics = lyrics.replace(/\n{3,}/g, "\n\n").trim();
+    }
+
     return lyrics;
   } catch (error) {
     console.error("Genius Error:", error.message);
@@ -985,12 +996,14 @@ const getPlaybackRows = (q, l) => {
     new ButtonBuilder()
       .setCustomId("pause_resume")
       .setLabel(
-        q.player.state.status === AudioPlayerStatus.Paused ? "Resume" : "Pause",
+        q.player.state.status === AudioPlayerStatus.Paused
+          ? i18n[l].resume
+          : i18n[l].pause,
       )
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("skip_song")
-      .setLabel("Skip")
+      .setLabel(i18n[l].skip_btn)
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("stop_song")
@@ -1007,8 +1020,12 @@ const getPlaybackRows = (q, l) => {
       .setLabel("AutoPlay")
       .setStyle(q.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
+      .setCustomId("toggle_discovery")
+      .setLabel("Discovery")
+      .setStyle(q.discovery ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId("like_song")
-      .setLabel("Guardar")
+      .setLabel(i18n[l].save_btn)
       .setStyle(ButtonStyle.Success),
   );
   return [row1, row2];
@@ -1218,12 +1235,17 @@ async function playNext(guildId) {
 
         if (!q.lastSong.isAutoplay) {
           console.log(
-            `\n👤 [MOTOR DUAL] Intervención humana detectada. Adaptando algoritmo a la nueva pista...`,
+            `\n👤 [MOTOR DUAL] Intervención humana. Anclando semilla a: ${q.lastSong.realArtist || q.lastSong.artist}`,
           );
-          q.batchCount = 5;
-        }
-
-        if (!activeModes.includes(q.currentBatchType) || q.batchCount >= 5) {
+          q.batchCount = 0;
+          q.currentBatchSeed =
+            q.lastSong.realArtist || q.lastSong.artist || "Music";
+          q.currentBatchType =
+            activeModes[Math.floor(Math.random() * activeModes.length)];
+        } else if (
+          !activeModes.includes(q.currentBatchType) ||
+          q.batchCount >= 5
+        ) {
           q.currentBatchType =
             activeModes[Math.floor(Math.random() * activeModes.length)];
           q.currentBatchSeed = null;
@@ -1573,22 +1595,44 @@ async function startStream(song, guildId, l) {
   try {
     const ytdlpArgs = [
       "-f",
-      "bestaudio",
+      "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
       "-q",
       "--no-playlist",
       "--cookies",
       "cookies.txt",
+      "--limit-rate",
+      "5M",
       "-o",
       "-",
       song.url,
     ];
     const ytdlpProcess = spawn("yt-dlp", ytdlpArgs);
 
-    let ffmpegArgs = [];
+    let ffmpegArgs = ["-hide_banner", "-loglevel", "error"];
+
     if (song.seekTime) ffmpegArgs.push("-ss", song.seekTime.toString());
-    ffmpegArgs.push("-i", "pipe:0", "-f", "mp3");
-    if (q.filter && q.filter !== "clear") ffmpegArgs.push("-af", q.filter);
-    ffmpegArgs.push("pipe:1");
+
+    ffmpegArgs.push("-i", "pipe:0");
+
+    if (q.filter && q.filter !== "clear") {
+      ffmpegArgs.push("-af", q.filter);
+    }
+
+    ffmpegArgs.push(
+      "-f",
+      "opus",
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "128k",
+      "-vbr",
+      "on",
+      "-compression_level",
+      "10",
+      "-frame_duration",
+      "20",
+      "pipe:1",
+    );
 
     const ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
 
@@ -1610,7 +1654,10 @@ async function startStream(song, guildId, l) {
     });
     ffmpegProcess.on("error", () => {});
 
-    const resource = createAudioResource(ffmpegProcess.stdout);
+    const resource = createAudioResource(ffmpegProcess.stdout, {
+      inputType: require("@discordjs/voice").StreamType.OggOpus,
+      inlineVolume: false,
+    });
     q.player.play(resource);
     q.playing = true;
 
@@ -1993,7 +2040,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!(await isAuthorized(interaction, q)))
           return interaction.reply({
             embeds: [UI.error(i18n[l].dj_required)],
-            flags: MessageFlags.Ephemeral,
+            flags: [MessageFlags.Ephemeral],
           });
 
         const baseMs = q.lastSong.seekTime ? q.lastSong.seekTime * 1000 : 0;
@@ -2010,50 +2057,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (q.player.state.status === AudioPlayerStatus.Playing) {
           q.player.pause();
-          const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId("pause_resume")
-              .setLabel(i18n[l].resume)
-              .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-              .setCustomId("skip_song")
-              .setLabel(i18n[l].skip_btn)
-              .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId("like_song")
-              .setLabel(i18n[l].save_btn)
-              .setStyle(ButtonStyle.Secondary),
-          );
-          await interaction.update({ embeds: [embedPlay], components: [row] });
+          const rows = getPlaybackRows(q, l);
+          await interaction
+            .update({ embeds: [embedPlay], components: rows })
+            .catch(() => {});
+
           await interaction
             .followUp({
               embeds: [UI.info(i18n[l].audio_ctrl, i18n[l].audio_paused)],
-              flags: MessageFlags.Ephemeral,
+              flags: [MessageFlags.Ephemeral],
             })
             .then((m) =>
               setTimeout(() => m.delete().catch(() => {}), MSG_LIFETIME),
             );
         } else if (q.player.state.status === AudioPlayerStatus.Paused) {
           q.player.unpause();
-          const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId("pause_resume")
-              .setLabel(i18n[l].pause)
-              .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId("skip_song")
-              .setLabel(i18n[l].skip_btn)
-              .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId("like_song")
-              .setLabel(i18n[l].save_btn)
-              .setStyle(ButtonStyle.Secondary),
-          );
-          await interaction.update({ embeds: [embedPlay], components: [row] });
+          const rows = getPlaybackRows(q, l);
+          await interaction
+            .update({ embeds: [embedPlay], components: rows })
+            .catch(() => {});
+
           await interaction
             .followUp({
               embeds: [UI.info(i18n[l].audio_ctrl, i18n[l].audio_resumed)],
-              flags: MessageFlags.Ephemeral,
+              flags: [MessageFlags.Ephemeral],
             })
             .then((m) =>
               setTimeout(() => m.delete().catch(() => {}), MSG_LIFETIME),
@@ -2062,7 +2089,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction
             .reply({
               embeds: [UI.error(i18n[l].nothing_playing)],
-              flags: MessageFlags.Ephemeral,
+              flags: [MessageFlags.Ephemeral],
             })
             .then((m) =>
               setTimeout(() => m.delete().catch(() => {}), MSG_LIFETIME),
