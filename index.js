@@ -1235,13 +1235,17 @@ async function playNext(guildId) {
 
         if (!q.lastSong.isAutoplay) {
           console.log(
-            `\n👤 [MOTOR DUAL] Intervención humana. Anclando semilla a: ${q.lastSong.realArtist || q.lastSong.artist}`,
+            `\n👤 [MOTOR DUAL] Intervención humana. Recalculando ruta...`,
           );
           q.batchCount = 0;
-          q.currentBatchSeed =
-            q.lastSong.realArtist || q.lastSong.artist || "Music";
           q.currentBatchType =
             activeModes[Math.floor(Math.random() * activeModes.length)];
+          if (q.currentBatchType === "DISCOVERY") {
+            q.currentBatchSeed = null;
+          } else {
+            q.currentBatchSeed =
+              q.lastSong.realArtist || q.lastSong.artist || "Music";
+          }
         } else if (
           !activeModes.includes(q.currentBatchType) ||
           q.batchCount >= 5
@@ -1264,43 +1268,97 @@ async function playNext(guildId) {
         if (q.currentBatchType === "DISCOVERY") {
           try {
             if (!q.currentBatchSeed) {
-              const trackInfo = await request(
-                `https://itunes.apple.com/search?term=${encodeURIComponent(artistFallback)}&entity=song&limit=1`,
-              ).then((r) => r.body.json());
+              let activeUserIds = [];
+              if (q.voiceChannel) {
+                q.voiceChannel.members.forEach((m) => {
+                  if (!m.user.bot) activeUserIds.push(m.id);
+                });
+              }
+
+              let artistPool = [];
+              if (activeUserIds.length > 0) {
+                const { rows } = await pool.query(
+                  "SELECT artist FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY artist",
+                  [activeUserIds]
+                );
+                artistPool = rows.map((r) => r.artist);
+              }
+              if (
+                artistPool.length === 0 &&
+                q.playedHistory &&
+                q.playedHistory.length > 0
+              ) {
+                artistPool = [
+                  ...new Set(q.playedHistory.slice(-10).map((s) => s.artist)),
+                ];
+              }
+
               q.currentBatchSeed =
-                trackInfo.results && trackInfo.results.length > 0
-                  ? trackInfo.results[0].primaryGenreName
-                  : "Pop";
-              console.log(
-                `[DISCOVERY] Nuevo género fijado: ${q.currentBatchSeed}`,
-              );
+                artistPool.length > 0
+                  ? artistPool[Math.floor(Math.random() * artistPool.length)]
+                  : artistFallback;
             }
 
-            const genreRes = await request(
-              `https://itunes.apple.com/search?term=${encodeURIComponent(q.currentBatchSeed)}&entity=song&limit=50`,
+            const lastfmKey = process.env.LASTFM_KEY;
+            expectedArtist = q.currentBatchSeed;
+
+            if (lastfmKey) {
+              const similarRes = await request(
+                `http://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist=${encodeURIComponent(q.currentBatchSeed)}&api_key=${lastfmKey}&format=json&limit=20`
+              ).then((r) => r.body.json());
+
+              if (
+                similarRes.similarartists &&
+                similarRes.similarartists.artist.length > 0
+              ) {
+                const validArtists = similarRes.similarartists.artist.filter(
+                  (a) =>
+                    !q.playedHistory.some(
+                      (h) => h.artist.toLowerCase() === a.name.toLowerCase()
+                    )
+                );
+
+                const randomArtistObj =
+                  validArtists.length > 0
+                    ? validArtists[Math.floor(Math.random() * validArtists.length)]
+                    : similarRes.similarartists.artist[
+                        Math.floor(Math.random() * similarRes.similarartists.artist.length)
+                      ];
+
+                expectedArtist = randomArtistObj.name;
+                console.log(
+                  `[DISCOVERY] Last.fm sugiere: ${expectedArtist} (Vibra similar a ${q.currentBatchSeed})`
+                );
+              }
+            } else {
+              console.log(`[WARNING] No se encontró LASTFM_KEY en el .env`);
+            }
+
+            const itunesRes = await request(
+              `https://itunes.apple.com/search?term=${encodeURIComponent(expectedArtist)}&entity=song&attribute=artistTerm&limit=15`
             ).then((r) => r.body.json());
 
-            const validGenreTracks = genreRes.results.filter((t) => {
-              const name = t.trackName.toLowerCase();
-              const art = t.artistName.toLowerCase();
-              return (
-                !name.includes("cover") &&
-                !name.includes("karaoke") &&
-                !name.includes("tribute") &&
-                !art.includes("tribute")
+            if (itunesRes.results && itunesRes.results.length > 0) {
+              const validTracks = itunesRes.results.filter(
+                (t) =>
+                  !t.trackName.toLowerCase().includes("cover") &&
+                  !t.trackName.toLowerCase().includes("live") &&
+                  !t.trackName.toLowerCase().includes("tribute")
               );
-            });
+              const unheard = validTracks.filter(
+                (t) => !q.titleHistory.includes(cleanSongName(t.trackName))
+              );
 
-            const unheard = validGenreTracks.filter(
-              (t) => !q.titleHistory.includes(cleanSongName(t.trackName)),
-            );
-            const randomTrack =
-              unheard.length > 0
-                ? unheard[Math.floor(Math.random() * unheard.length)]
-                : validGenreTracks[0] || genreRes.results[0];
+              const randomTrack =
+                unheard.length > 0
+                  ? unheard[Math.floor(Math.random() * unheard.length)]
+                  : validTracks[0] || itunesRes.results[0];
 
-            expectedArtist = randomTrack.artistName;
-            targetQuery = `${randomTrack.trackName} ${expectedArtist} official audio`;
+              targetQuery = `${randomTrack.trackName} ${expectedArtist} official audio`;
+              expectedArtist = randomTrack.artistName;
+            } else {
+              targetQuery = `${expectedArtist} top songs official audio`;
+            }
           } catch (e) {
             expectedArtist = artistFallback;
             targetQuery = `${artistFallback} official audio`;
