@@ -187,6 +187,11 @@ const i18n = {
       "¿Te quedaste sin música? Activa el Autoplay Inteligente para seguir escuchando pistas similares sin interrupciones.",
     autoplay_offer_free: `¿Te quedaste sin música? Activa el Autoplay (5 pistas gratis) o adquiere Premium en [nuestro portal](${PATREON_LINK}) para reproducción infinita.`,
     btn_enable_autoplay: "Activar Autoplay",
+    autoplay_on_ephemeral: "Autoplay activado.",
+    autoplay_off_ephemeral: "Autoplay desactivado.",
+    discovery_on_ephemeral: "Modo Discovery activado.",
+    discovery_off_ephemeral: "Modo Discovery desactivado.",
+    saved_btn_done: "Guardado",
   },
   en: {
     welcome: "Initial Setup Required",
@@ -318,6 +323,11 @@ const i18n = {
       "Out of music? Enable **Smart Autoplay** to keep listening to similar tracks seamlessly.",
     autoplay_offer_free: `Out of music? Enable **Autoplay** (5 free tracks) or upgrade to Premium at [our portal](${PATREON_LINK}) for infinite playback.`,
     btn_enable_autoplay: "Enable Autoplay",
+    autoplay_on_ephemeral: "Autoplay enabled.",
+    autoplay_off_ephemeral: "Autoplay disabled.",
+    discovery_on_ephemeral: "Discovery mode enabled.",
+    discovery_off_ephemeral: "Discovery mode disabled.",
+    saved_btn_done: "Saved",
   },
 };
 
@@ -1025,8 +1035,11 @@ const getPlaybackRows = (q, l) => {
       .setStyle(q.discovery ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("like_song")
-      .setLabel(i18n[l].save_btn)
-      .setStyle(ButtonStyle.Success),
+      .setLabel(q.lastSong?.isLiked ? i18n[l].saved_btn_done : i18n[l].save_btn)
+      .setStyle(
+        q.lastSong?.isLiked ? ButtonStyle.Secondary : ButtonStyle.Success,
+      )
+      .setDisabled(q.lastSong?.isLiked ? true : false),
   );
   return [row1, row2];
 };
@@ -1093,15 +1106,36 @@ const createSong = (
 ) => {
   let rawAuthor =
     typeof video.author === "string" ? video.author : video.author?.name || "";
-  let artist = artistOverride || cleanArtistName(rawAuthor);
 
-  if (
-    (!artist || artist === "Desconocido" || artist === "Artista Desconocido") &&
-    video.title.includes("-")
-  ) {
-    artist = video.title.split("-")[0].trim();
+  let artist = artistOverride;
+
+  if (!artist) {
+    let channelName = cleanArtistName(rawAuthor);
+    const isOfficial = /VEVO$| - Topic$|官方頻道$|Oficial$|Official$/i.test(
+      rawAuthor,
+    );
+
+    if (video.title && video.title.includes("-")) {
+      let leftPart = video.title.split("-")[0].trim();
+
+      if (isOfficial) {
+        artist = channelName;
+      } else {
+        if (leftPart.length > 0 && leftPart.length < 40) {
+          artist = leftPart;
+        } else {
+          artist = channelName;
+        }
+      }
+    } else {
+      artist = channelName;
+    }
   }
-  if (!artist) artist = "Artista Desconocido";
+  if (artist) {
+    artist = artist.replace(/\[.*?\]|\(.*?\)/g, "").trim();
+  }
+
+  if (!artist || artist === "") artist = "Artista Desconocido";
 
   const isWebId =
     video.videoId && /^(itunes|spotify|tidal)_/.test(String(video.videoId));
@@ -1268,35 +1302,19 @@ async function playNext(guildId) {
         if (q.currentBatchType === "DISCOVERY") {
           try {
             if (!q.currentBatchSeed) {
-              let activeUserIds = [];
-              if (q.voiceChannel) {
-                q.voiceChannel.members.forEach((m) => {
-                  if (!m.user.bot) activeUserIds.push(m.id);
-                });
-              }
-
-              let artistPool = [];
-              if (activeUserIds.length > 0) {
-                const { rows } = await pool.query(
-                  "SELECT artist FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY artist",
-                  [activeUserIds]
-                );
-                artistPool = rows.map((r) => r.artist);
-              }
+              q.currentBatchSeed = q.lastSong
+                ? q.lastSong.realArtist || q.lastSong.artist
+                : artistFallback;
               if (
-                artistPool.length === 0 &&
-                q.playedHistory &&
-                q.playedHistory.length > 0
+                !q.currentBatchSeed ||
+                q.currentBatchSeed === "Desconocido" ||
+                q.currentBatchSeed === "???"
               ) {
-                artistPool = [
-                  ...new Set(q.playedHistory.slice(-10).map((s) => s.artist)),
-                ];
+                q.currentBatchSeed = "Music";
               }
-
-              q.currentBatchSeed =
-                artistPool.length > 0
-                  ? artistPool[Math.floor(Math.random() * artistPool.length)]
-                  : artistFallback;
+              console.log(
+                `[DISCOVERY] Semilla base anclada a la pista actual: ${q.currentBatchSeed}`,
+              );
             }
 
             const lastfmKey = process.env.LASTFM_KEY;
@@ -1304,7 +1322,7 @@ async function playNext(guildId) {
 
             if (lastfmKey) {
               const similarRes = await request(
-                `http://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist=${encodeURIComponent(q.currentBatchSeed)}&api_key=${lastfmKey}&format=json&limit=20`
+                `http://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist=${encodeURIComponent(q.currentBatchSeed)}&api_key=${lastfmKey}&format=json&limit=20`,
               ).then((r) => r.body.json());
 
               if (
@@ -1314,20 +1332,28 @@ async function playNext(guildId) {
                 const validArtists = similarRes.similarartists.artist.filter(
                   (a) =>
                     !q.playedHistory.some(
-                      (h) => h.artist.toLowerCase() === a.name.toLowerCase()
-                    )
+                      (h) => h.artist.toLowerCase() === a.name.toLowerCase(),
+                    ) &&
+                    !globalBlacklist.some((b) =>
+                      a.name.toLowerCase().includes(b.toLowerCase()),
+                    ),
                 );
 
                 const randomArtistObj =
                   validArtists.length > 0
-                    ? validArtists[Math.floor(Math.random() * validArtists.length)]
+                    ? validArtists[
+                        Math.floor(Math.random() * validArtists.length)
+                      ]
                     : similarRes.similarartists.artist[
-                        Math.floor(Math.random() * similarRes.similarartists.artist.length)
+                        Math.floor(
+                          Math.random() *
+                            similarRes.similarartists.artist.length,
+                        )
                       ];
 
                 expectedArtist = randomArtistObj.name;
                 console.log(
-                  `[DISCOVERY] Last.fm sugiere: ${expectedArtist} (Vibra similar a ${q.currentBatchSeed})`
+                  `[DISCOVERY] Last.fm sugiere: ${expectedArtist} (Vibra similar a ${q.currentBatchSeed})`,
                 );
               }
             } else {
@@ -1335,7 +1361,7 @@ async function playNext(guildId) {
             }
 
             const itunesRes = await request(
-              `https://itunes.apple.com/search?term=${encodeURIComponent(expectedArtist)}&entity=song&attribute=artistTerm&limit=15`
+              `https://itunes.apple.com/search?term=${encodeURIComponent(expectedArtist)}&entity=song&attribute=artistTerm&limit=15`,
             ).then((r) => r.body.json());
 
             if (itunesRes.results && itunesRes.results.length > 0) {
@@ -1343,19 +1369,33 @@ async function playNext(guildId) {
                 (t) =>
                   !t.trackName.toLowerCase().includes("cover") &&
                   !t.trackName.toLowerCase().includes("live") &&
-                  !t.trackName.toLowerCase().includes("tribute")
-              );
-              const unheard = validTracks.filter(
-                (t) => !q.titleHistory.includes(cleanSongName(t.trackName))
+                  !t.trackName.toLowerCase().includes("tribute") &&
+                  !globalBlacklist.some(
+                    (b) =>
+                      t.artistName.toLowerCase().includes(b.toLowerCase()) ||
+                      t.trackName.toLowerCase().includes(b.toLowerCase()),
+                  ),
               );
 
-              const randomTrack =
-                unheard.length > 0
-                  ? unheard[Math.floor(Math.random() * unheard.length)]
-                  : validTracks[0] || itunesRes.results[0];
+              if (validTracks.length > 0) {
+                const unheard = validTracks.filter(
+                  (t) =>
+                    !q.titleHistory.some(
+                      (h) =>
+                        h.includes(cleanSongName(t.trackName)) ||
+                        cleanSongName(t.trackName).includes(h),
+                    ),
+                );
+                const randomTrack =
+                  unheard.length > 0
+                    ? unheard[Math.floor(Math.random() * unheard.length)]
+                    : validTracks[0];
 
-              targetQuery = `${randomTrack.trackName} ${expectedArtist} official audio`;
-              expectedArtist = randomTrack.artistName;
+                targetQuery = `${randomTrack.trackName} ${expectedArtist} official audio`;
+                expectedArtist = randomTrack.artistName;
+              } else {
+                targetQuery = `${expectedArtist} top songs official audio`;
+              }
             } else {
               targetQuery = `${expectedArtist} top songs official audio`;
             }
@@ -1417,20 +1457,38 @@ async function playNext(guildId) {
                   !t.trackName.toLowerCase().includes("cover") &&
                   !t.trackName.toLowerCase().includes("tribute") &&
                   !t.artistName.toLowerCase().includes("tribute");
-                return isSameArtist && isNotCover;
+                const isBlacklisted = globalBlacklist.some(
+                  (b) =>
+                    t.artistName.toLowerCase().includes(b.toLowerCase()) ||
+                    t.trackName.toLowerCase().includes(b.toLowerCase()),
+                );
+
+                return isSameArtist && isNotCover && !isBlacklisted;
               });
 
-              const unheard = strictTracks.filter(
-                (t) => !q.titleHistory.includes(cleanSongName(t.trackName)),
-              );
-              const randomTrack =
-                unheard.length > 0
-                  ? unheard[Math.floor(Math.random() * unheard.length)]
-                  : strictTracks[0] || itunesRes.results[0];
+              if (strictTracks.length > 0) {
+                const unheard = strictTracks.filter(
+                  (t) =>
+                    !q.titleHistory.some(
+                      (h) =>
+                        h.includes(cleanSongName(t.trackName)) ||
+                        cleanSongName(t.trackName).includes(h),
+                    ),
+                );
+                const randomTrack =
+                  unheard.length > 0
+                    ? unheard[Math.floor(Math.random() * unheard.length)]
+                    : strictTracks[0];
 
-              targetQuery = `${randomTrack.trackName} ${q.currentBatchSeed} official audio`;
+                targetQuery = `${randomTrack.trackName} ${q.currentBatchSeed} official audio`;
+                expectedArtist = randomTrack.artistName;
+              } else {
+                targetQuery = `${q.currentBatchSeed} top songs official audio`;
+                expectedArtist = q.currentBatchSeed;
+              }
             } else {
-              targetQuery = `${q.currentBatchSeed} official audio`;
+              targetQuery = `${q.currentBatchSeed} top songs official audio`;
+              expectedArtist = q.currentBatchSeed;
             }
           } catch (e) {
             targetQuery = `${q.currentBatchSeed} official audio`;
@@ -1444,8 +1502,23 @@ async function playNext(guildId) {
           let validVideos = searchRes.videos.filter((v) => {
             if (q.history.includes(v.videoId)) return false;
 
+            const isAlreadyPlayed = q.titleHistory.some(
+              (h) =>
+                h.includes(cleanSongName(v.title)) ||
+                cleanSongName(v.title).includes(h),
+            );
+            if (isAlreadyPlayed) return false;
+
             const vTitle = v.title.toLowerCase();
             const vAuthor = v.author.name.toLowerCase();
+            if (
+              globalBlacklist.some(
+                (b) =>
+                  vTitle.includes(b.toLowerCase()) ||
+                  vAuthor.includes(b.toLowerCase()),
+              )
+            )
+              return false;
 
             if (SPAM_WORDS.some((sw) => vTitle.includes(sw))) return false;
             if (
@@ -1469,13 +1542,29 @@ async function playNext(guildId) {
             validVideos = searchRes.videos.filter(
               (v) =>
                 !q.history.includes(v.videoId) &&
+                !q.titleHistory.some(
+                  (h) =>
+                    h.includes(cleanSongName(v.title)) ||
+                    cleanSongName(v.title).includes(h),
+                ) &&
+                !globalBlacklist.some(
+                  (b) =>
+                    v.title.toLowerCase().includes(b.toLowerCase()) ||
+                    v.author.name.toLowerCase().includes(b.toLowerCase()),
+                ) &&
                 !SPAM_WORDS.some((sw) => v.title.toLowerCase().includes(sw)) &&
                 !v.title.toLowerCase().includes("cover"),
             );
           }
 
           let nextVideo =
-            validVideos.length > 0 ? validVideos[0] : searchRes.videos[0];
+            validVideos.length > 0
+              ? validVideos[0]
+              : searchRes.videos[
+                  Math.floor(
+                    Math.random() * Math.min(10, searchRes.videos.length),
+                  )
+                ];
 
           q.autoplayCount++;
           q.batchCount++;
@@ -1566,6 +1655,99 @@ async function playNext(guildId) {
 
   q.lastSong = song;
 
+  if (!song.isTrivia) {
+    try {
+      let cleanTitle = song.title
+        .replace(
+          /\[.*?\]|\(.*?\)|official|video|audio|lyric|live|remastered|hd/gi,
+          "",
+        )
+        .trim();
+      let searchString = `${cleanTitle} ${song.artist}`.trim();
+
+      const itunesRes = await request(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(searchString)}&entity=song&limit=5`,
+      ).then((r) => r.body.json());
+
+      if (itunesRes.results && itunesRes.results.length > 0) {
+        let bestMatch = null;
+        const baseCompare = getCompareString(cleanTitle);
+
+        for (const track of itunesRes.results) {
+          const itunesCompare = getCompareString(track.trackName);
+          if (baseCompare.length > 1 && itunesCompare.length > 1) {
+            if (
+              baseCompare.includes(itunesCompare) ||
+              itunesCompare.includes(baseCompare)
+            ) {
+              const foundArtist = track.artistName.toLowerCase();
+              if (
+                song.artist.toLowerCase().includes(foundArtist) ||
+                foundArtist.includes(song.artist.toLowerCase())
+              ) {
+                bestMatch = track;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!bestMatch && itunesRes.results[0].collectionId) {
+          console.log(
+            `[METADATA HEALER] Sin coincidencia directa. Explorando interior del álbum: ${itunesRes.results[0].collectionName}...`,
+          );
+
+          const albumId = itunesRes.results[0].collectionId;
+          const albumRes = await request(
+            `https://itunes.apple.com/lookup?id=${albumId}&entity=song`,
+          ).then((r) => r.body.json());
+
+          if (albumRes.results && albumRes.results.length > 0) {
+            for (const track of albumRes.results) {
+              if (track.wrapperType === "track") {
+                const itunesCompare = getCompareString(track.trackName);
+                if (baseCompare.length > 1 && itunesCompare.length > 1) {
+                  if (
+                    baseCompare.includes(itunesCompare) ||
+                    itunesCompare.includes(baseCompare)
+                  ) {
+                    bestMatch = track;
+                    console.log(
+                      `[METADATA HEALER] ¡Rescatado desde el fondo del álbum!`,
+                    );
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (bestMatch) {
+          song.artist = bestMatch.artistName;
+          song.title = bestMatch.trackName;
+
+          if (!song.hasRealCover) {
+            song.thumbnail = bestMatch.artworkUrl100.replace(
+              "100x100bb",
+              "600x600bb",
+            );
+            song.hasRealCover = true;
+          }
+          console.log(
+            `[METADATA HEALER] Magia aplicada con éxito. Corregido a: ${song.artist} - ${song.title}`,
+          );
+        } else {
+          console.log(
+            `[METADATA HEALER] Búsqueda exhaustiva fallida. Manteniendo miniatura original de YouTube.`,
+          );
+        }
+      }
+    } catch (e) {
+      console.error("[METADATA HEALER ERROR]", e.message);
+    }
+  }
+
   if (!song.hasRealCover && !song.isTrivia) {
     try {
       const cleanTitleForiTunes = cleanSongName(song.title);
@@ -1580,9 +1762,7 @@ async function playNext(guildId) {
           "600x600bb",
         );
       }
-    } catch (e) {
-      console.log("[ITUNES ERROR]", e.message);
-    }
+    } catch (e) {}
     song.hasRealCover = true;
   }
 
@@ -2069,27 +2249,61 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: [MessageFlags.Ephemeral],
           });
         }
-
         q.autoplay = !q.autoplay;
         if (q.autoplay) q.autoplayCount = 0;
 
-        const rows = getPlaybackRows(q, l);
-
-        await interaction.update({ components: rows }).catch(() => {});
+        await interaction
+          .update({ components: getPlaybackRows(q, l) })
+          .catch(() => {});
 
         const statusMsg = q.autoplay
-          ? "AUTOPLAY: ENABLED"
-          : "AUTOPLAY: DISABLED";
+          ? i18n[l].autoplay_on_ephemeral
+          : i18n[l].autoplay_off_ephemeral;
+        await interaction
+          .followUp({
+            embeds: [UI.success(statusMsg)],
+            flags: [MessageFlags.Ephemeral],
+          })
+          .catch(() => {});
+        io.emit(
+          "track_added",
+          `AUTOPLAY: ${q.autoplay ? "ENABLED" : "DISABLED"}`,
+        );
 
-        if (q.textChannel) {
-          q.textChannel
-            .send({ embeds: [UI.success(statusMsg)] })
-            .then((m) => setTimeout(() => m.delete().catch(() => {}), 5000))
-            .catch(() => {});
-        }
-
-        io.emit("track_added", statusMsg);
         if (q.autoplay && !q.playing && q.songs.length === 0 && q.lastSong)
+          playNext(guildId);
+        return;
+      }
+
+      if (interaction.customId === "toggle_discovery") {
+        if (!(await checkPremium(guildId))) {
+          return interaction.reply({
+            embeds: [UI.info("ACCESO", i18n[l].premium_only)],
+            flags: [MessageFlags.Ephemeral],
+          });
+        }
+        q.discovery = !q.discovery;
+        if (q.discovery) q.autoplayCount = 0;
+
+        await interaction
+          .update({ components: getPlaybackRows(q, l) })
+          .catch(() => {});
+
+        const statusMsg = q.discovery
+          ? i18n[l].discovery_on_ephemeral
+          : i18n[l].discovery_off_ephemeral;
+        await interaction
+          .followUp({
+            embeds: [UI.success(statusMsg)],
+            flags: [MessageFlags.Ephemeral],
+          })
+          .catch(() => {});
+        io.emit(
+          "track_added",
+          `DISCOVERY: ${q.discovery ? "ENABLED" : "DISABLED"}`,
+        );
+
+        if (q.discovery && !q.playing && q.songs.length === 0 && q.lastSong)
           playNext(guildId);
         return;
       }
@@ -2174,28 +2388,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "SELECT id FROM likes WHERE user_id = $1 AND video_id = $2",
           [userId, q.lastSong.videoId],
         );
-        if (check.rows.length > 0)
-          return interaction
-            .reply({
-              embeds: [UI.info(i18n[l].collection, i18n[l].already_liked)],
-              flags: MessageFlags.Ephemeral,
-            })
-            .then((m) =>
-              setTimeout(() => m.delete().catch(() => {}), MSG_LIFETIME),
-            );
+        if (check.rows.length > 0) {
+          q.lastSong.isLiked = true;
+          await interaction
+            .update({ components: getPlaybackRows(q, l) })
+            .catch(() => {});
+          return interaction.followUp({
+            embeds: [UI.info(i18n[l].collection, i18n[l].already_liked)],
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+
         await pool.query(
           "INSERT INTO likes (user_id, video_id, title, artist) VALUES ($1, $2, $3, $4)",
           [userId, q.lastSong.videoId, likeTitle, likeArtist],
         );
+
+        q.lastSong.isLiked = true;
         await interaction
-          .reply({
-            embeds: [UI.success(`${i18n[l].like_added}\n> **${likeTitle}**`)],
-            flags: MessageFlags.Ephemeral,
-          })
-          .then((m) =>
-            setTimeout(() => m.delete().catch(() => {}), MSG_LIFETIME),
-          );
-        return;
+          .update({ components: getPlaybackRows(q, l) })
+          .catch(() => {});
+
+        return interaction.followUp({
+          embeds: [UI.success(`${i18n[l].like_added}\n> **${likeTitle}**`)],
+          flags: MessageFlags.Ephemeral,
+        });
       }
 
       if (interaction.customId === "shuffle_queue") {
@@ -3095,37 +3312,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (command === "stats") {
-      const members = await interaction.guild.members.fetch();
-      const memberIds = Array.from(members.keys());
+      try {
+        const memberIds = interaction.guild.members.cache.map((m) => m.id);
 
-      const totalRes = await pool.query(
-        "SELECT COUNT(*) FROM likes WHERE user_id = ANY($1::varchar[])",
-        [memberIds],
-      );
-      if (totalRes.rows[0].count == 0)
-        return interaction.editReply({
-          embeds: [UI.info(i18n[l].metrics, i18n[l].stats_no_likes)],
+        const totalRes = await pool.query(
+          "SELECT COUNT(*) FROM likes WHERE user_id = ANY($1::varchar[])",
+          [memberIds],
+        );
+
+        if (totalRes.rows[0].count == 0)
+          return interaction.editReply({
+            embeds: [UI.info(i18n[l].metrics, i18n[l].stats_no_likes)],
+          });
+
+        const topUserRes = await pool.query(
+          "SELECT user_id, COUNT(*) as count FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY user_id ORDER BY count DESC LIMIT 1",
+          [memberIds],
+        );
+        const topArtistsRes = await pool.query(
+          "SELECT artist, COUNT(*) as count FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY artist ORDER BY count DESC LIMIT 10",
+          [memberIds],
+        );
+
+        let statsMsg = `> **${i18n[l].stats_total}** ${totalRes.rows[0].count}\n`;
+        if (topUserRes.rows.length > 0)
+          statsMsg += `> **${i18n[l].stats_top_user}** <@${topUserRes.rows[0].user_id}> (${topUserRes.rows[0].count})\n\n`;
+        statsMsg += `**${i18n[l].stats_top_artists}**\n`;
+        topArtistsRes.rows.forEach((row, index) => {
+          statsMsg += `\`${(index + 1).toString().padStart(2, "0")}.\` ${row.artist} — ${row.count} likes\n`;
         });
 
-      const topUserRes = await pool.query(
-        "SELECT user_id, COUNT(*) as count FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY user_id ORDER BY count DESC LIMIT 1",
-        [memberIds],
-      );
-      const topArtistsRes = await pool.query(
-        "SELECT artist, COUNT(*) as count FROM likes WHERE user_id = ANY($1::varchar[]) GROUP BY artist ORDER BY count DESC LIMIT 10",
-        [memberIds],
-      );
-
-      let statsMsg = `> **${i18n[l].stats_total}** ${totalRes.rows[0].count}\n`;
-      if (topUserRes.rows.length > 0)
-        statsMsg += `> **${i18n[l].stats_top_user}** <@${topUserRes.rows[0].user_id}> (${topUserRes.rows[0].count})\n\n`;
-      statsMsg += `**${i18n[l].stats_top_artists}**\n`;
-      topArtistsRes.rows.forEach((row, index) => {
-        statsMsg += `\`${(index + 1).toString().padStart(2, "0")}.\` ${row.artist} — ${row.count} likes\n`;
-      });
-      interaction.editReply({
-        embeds: [UI.info(i18n[l].stats_title, statsMsg)],
-      });
+        interaction.editReply({
+          embeds: [UI.info(i18n[l].stats_title, statsMsg)],
+        });
+      } catch (e) {
+        interaction.editReply({
+          embeds: [UI.error("Error al calcular métricas del servidor.")],
+        });
+      }
     }
 
     if (command === "history") {
